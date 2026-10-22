@@ -86,7 +86,7 @@
       bottom: 0;
       left: 0;
       right: 0;
-      background: linear-gradient(0deg, rgba(0,0,0,0.9) 0%, transparent 100%);
+      background: linear-gradient(0deg, rgba(0,0,0,0.95) 0%, transparent 100%);
       padding: 24px 20px;
       display: flex;
       justify-content: space-around;
@@ -133,6 +133,36 @@
       from { opacity: 0.9; transform: scale(0.99); }
       to { opacity: 1; transform: scale(1.01); }
     }
+    .fallback-card {
+      position: absolute;
+      inset: 20px;
+      top: 80px;
+      bottom: 90px;
+      background: rgba(22, 27, 34, 0.95);
+      border: 1px solid #30363d;
+      border-radius: 12px;
+      padding: 20px;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      align-items: center;
+      text-align: center;
+      gap: 14px;
+      z-index: 15;
+    }
+    .fallback-card.hidden { display: none; }
+    .fallback-card h3 { color: #58a6ff; font-size: 18px; }
+    .fallback-card p { font-size: 13px; color: #8b949e; line-height: 1.5; }
+    .fallback-btn {
+      background: #2f81f7;
+      color: #fff;
+      padding: 14px 24px;
+      border-radius: 8px;
+      font-weight: 700;
+      font-size: 15px;
+      border: none;
+      cursor: pointer;
+    }
   </style>
 </head>
 <body>
@@ -144,13 +174,25 @@
     </div>
     <div id="status-pill" class="status-badge">
       <span class="status-dot"></span>
-      <span id="status-text">Standby</span>
+      <span id="status-text">Connecting...</span>
     </div>
   </div>
 
   <div class="video-viewport">
     <video id="phone-video" autoplay playsinline muted></video>
     <canvas id="phone-canvas"></canvas>
+
+    <!-- Fallback if phone browser restricts direct camera over HTTP -->
+    <div id="http-fallback-card" class="fallback-card hidden">
+      <span style="font-size: 40px;">📷</span>
+      <h3>Camera Permission Required</h3>
+      <p id="fallback-reason">To stream continuously, tap Start below or use a quick snapshot capture.</p>
+      <label class="fallback-btn">
+        <span>📸 Tap to Snap & Stream</span>
+        <input type="file" id="fallback-capture-input" accept="image/*" capture="environment" style="display: none;">
+      </label>
+      <small style="color: #6e7681; font-size: 11px;">You can also use the free mobile app <strong>IP Webcam</strong> and paste its stream URL into the CCTV tab on the dashboard.</small>
+    </div>
 
     <div id="match-banner" class="alert-banner hidden">
       <span style="font-size: 24px;">🚨</span>
@@ -183,6 +225,9 @@
     const matchBanner = document.getElementById("match-banner");
     const matchTargetName = document.getElementById("match-target-name");
     const matchTargetInfo = document.getElementById("match-target-info");
+    const fallbackCard = document.getElementById("http-fallback-card");
+    const fallbackReason = document.getElementById("fallback-reason");
+    const fallbackInput = document.getElementById("fallback-capture-input");
 
     let currentStream = null;
     let facingMode = "environment"; // default to rear back camera for mobile surveillance
@@ -193,6 +238,11 @@
     async function initCamera() {
       if (currentStream) {
         currentStream.getTracks().forEach(t => t.stop());
+      }
+
+      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+        showFallback("Your mobile browser does not allow live video on HTTP without SSL. Use the Snap & Stream button or IP Webcam app.");
+        return;
       }
 
       try {
@@ -206,6 +256,8 @@
         });
 
         video.srcObject = currentStream;
+        fallbackCard.classList.add("hidden");
+
         video.onloadedmetadata = () => {
           canvas.width = video.videoWidth;
           canvas.height = video.videoHeight;
@@ -215,11 +267,48 @@
         statusPill.className = "status-badge streaming";
         statusText.textContent = "Live Stream Active";
       } catch (err) {
-        alert("Camera error: " + err.message);
-        statusPill.className = "status-badge";
-        statusText.textContent = "Camera Error";
+        showFallback("Camera permission blocked: " + err.message);
       }
     }
+
+    function showFallback(msg) {
+      fallbackCard.classList.remove("hidden");
+      fallbackReason.textContent = msg;
+      statusPill.className = "status-badge";
+      statusText.textContent = "Snapshot Mode";
+    }
+
+    // Fallback file input capture
+    fallbackInput.addEventListener("change", (e) => {
+      const file = e.target.files[0];
+      if (file) {
+        const reader = new FileReader();
+        reader.onload = async (event) => {
+          const b64 = event.target.result;
+          statusPill.className = "status-badge streaming";
+          statusText.textContent = "Snapshot Uploaded";
+          try {
+            const res = await fetch("/api/mobile/frame", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                camera_id: cameraId,
+                camera_name: cameraName,
+                image: b64,
+                force_recognition: true
+              })
+            });
+            if (res.ok) {
+              const data = await res.json();
+              drawDetections(data);
+            }
+          } catch (e) {
+            console.warn(e);
+          }
+        };
+        reader.readAsDataURL(file);
+      }
+    });
 
     function startStreamingLoop() {
       if (streamInterval) clearInterval(streamInterval);

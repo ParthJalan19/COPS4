@@ -1,8 +1,8 @@
 @echo off
-title Face Detection & Recognition System
+title Face Detection & Surveillance System
 echo ========================================================
-echo   Starting Face Recognition & Motion Detection System
+echo   Starting Surveillance Camera Wall & Face Recognition
 echo ========================================================
 echo.
-python -m uvicorn main:app --host 127.0.0.1 --port 8000 --reload
+python -m uvicorn main:app --host 0.0.0.0 --port 8000 --reload
 pause
