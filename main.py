@@ -14,6 +14,7 @@ from typing import Optional, List
 
 import database
 from face_engine import FaceEngine
+from weapon_detector import weapon_detector
 from ip_camera import stream_manager
 
 app = FastAPI(title="COPS Camera Wall & Face Recognition System", version="3.0.0")
@@ -32,8 +33,9 @@ app.add_middleware(
 
 face_engine = FaceEngine()
 
-# Throttle alerts per player/camera so we don't spam alerts every frame
+# Throttle alerts per player/camera and weapon/camera
 _last_alert_times = {}
+_last_weapon_alert_times = {}
 
 STATIC_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
 os.makedirs(STATIC_DIR, exist_ok=True)
@@ -103,6 +105,7 @@ def get_status():
         "models_loaded": {
             "face_detector": "OpenCV YuNet ONNX (face_detection_yunet)",
             "face_recognizer": "OpenCV SFace ONNX (face_recognition_sface)",
+            "weapon_detector": "YOLOv8 ONNX (pistol, knife, firearms, blades)",
             "motion_detector": "Frame Differencing & Contour Area"
         }
     }
@@ -187,9 +190,42 @@ def mobile_frame_endpoint(req: MobileFrameRequest):
         force_recognition=req.force_recognition
     )
 
+    # Process weapon scanning (knives, guns/pistols)
+    weapons = weapon_detector.detect_weapons(frame)
+    result["weapons"] = weapons
+    result["has_weapon"] = len(weapons) > 0
+
     now = time.time()
     generated_alerts = []
 
+    # Process weapon emergency alerts
+    for w_obj in weapons:
+        w_cls = w_obj["class"]
+        w_key = f"weapon_{req.camera_id}_{w_cls}"
+        last_w_alert = _last_weapon_alert_times.get(w_key, 0)
+        if now - last_w_alert > 3.0:
+            _last_weapon_alert_times[w_key] = now
+            wx, wy, ww, wh = w_obj["bbox"]
+            fh, fw = frame.shape[:2]
+            pad_x = int(ww * 0.2)
+            pad_y = int(wh * 0.2)
+            crop = frame[max(0, wy - pad_y):min(fh, wy + wh + pad_y), max(0, wx - pad_x):min(fw, wx + ww + pad_x)]
+            snap_b64 = ""
+            if crop.size > 0:
+                _, buf = cv2.imencode(".jpg", crop, [cv2.IMWRITE_JPEG_QUALITY, 85])
+                snap_b64 = "data:image/jpeg;base64," + base64.b64encode(buf.tobytes()).decode("utf-8")
+
+            w_alert = database.generate_weapon_alert(
+                weapon_class=w_cls,
+                label=w_obj["label"],
+                confidence=w_obj["confidence"],
+                snapshot=snap_b64,
+                camera_id=req.camera_id,
+                camera_name=req.camera_name or "Mobile Phone Camera"
+            )
+            generated_alerts.append(w_alert)
+
+    # Process watchlist target alerts
     for face in result.get("faces", []):
         if face.get("is_match") and face.get("person_id"):
             pid = face["person_id"]
@@ -347,9 +383,42 @@ def detect_endpoint(req: DetectRequest):
         force_recognition=req.force_recognition
     )
 
+    # Process weapon scanning (knives, guns/pistols)
+    weapons = weapon_detector.detect_weapons(frame)
+    result["weapons"] = weapons
+    result["has_weapon"] = len(weapons) > 0
+
     now = time.time()
     generated_alerts = []
 
+    # Process weapon emergency alerts
+    for w_obj in weapons:
+        w_cls = w_obj["class"]
+        w_key = f"weapon_{req.camera_id or 'cam_main'}_{w_cls}"
+        last_w_alert = _last_weapon_alert_times.get(w_key, 0)
+        if now - last_w_alert > 3.0:
+            _last_weapon_alert_times[w_key] = now
+            wx, wy, ww, wh = w_obj["bbox"]
+            fh, fw = frame.shape[:2]
+            pad_x = int(ww * 0.2)
+            pad_y = int(wh * 0.2)
+            crop = frame[max(0, wy - pad_y):min(fh, wy + wh + pad_y), max(0, wx - pad_x):min(fw, wx + ww + pad_x)]
+            snap_b64 = ""
+            if crop.size > 0:
+                _, buf = cv2.imencode(".jpg", crop, [cv2.IMWRITE_JPEG_QUALITY, 85])
+                snap_b64 = "data:image/jpeg;base64," + base64.b64encode(buf.tobytes()).decode("utf-8")
+
+            w_alert = database.generate_weapon_alert(
+                weapon_class=w_cls,
+                label=w_obj["label"],
+                confidence=w_obj["confidence"],
+                snapshot=snap_b64,
+                camera_id=req.camera_id or "cam_main",
+                camera_name=req.camera_name or "Main Surveillance"
+            )
+            generated_alerts.append(w_alert)
+
+    # Process watchlist target alerts
     for face in result.get("faces", []):
         if face.get("is_match") and face.get("person_id"):
             pid = face["person_id"]

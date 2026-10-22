@@ -290,6 +290,28 @@ function startWebcamLoop(camId, camName, videoEl, overlayEl) {
   }, 250);
 }
 
+// Synthesized Threat Tone (No external audio file required)
+function playThreatTone() {
+  try {
+    const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+    if (!AudioContextClass) return;
+    const audioCtx = new AudioContextClass();
+    const osc = audioCtx.createOscillator();
+    const gain = audioCtx.createGain();
+    osc.type = "sawtooth";
+    osc.frequency.setValueAtTime(880, audioCtx.currentTime); // High pitch alarm
+    osc.frequency.exponentialRampToValueAtTime(440, audioCtx.currentTime + 0.28);
+    gain.gain.setValueAtTime(0.25, audioCtx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.28);
+    osc.connect(gain);
+    gain.connect(audioCtx.destination);
+    osc.start();
+    osc.stop(audioCtx.currentTime + 0.29);
+  } catch (e) {
+    // Browser may require user interaction first
+  }
+}
+
 // ---------------- GENERIC DETECTION RENDERER ----------------
 function handleDetectionResult(camId, camName, data, capturedDataUrl, overlayEl, ctx) {
   const motionBadge = document.getElementById(`motion-badge-${camId}`);
@@ -297,6 +319,7 @@ function handleDetectionResult(camId, camName, data, capturedDataUrl, overlayEl,
   const holdBanner = document.getElementById(`hold-banner-${camId}`);
   const btnResume = document.getElementById(`btn-resume-${camId}`);
   const tile = document.getElementById(`tile-${camId}`);
+  const isVideoFeed = tile && tile.querySelector("video") !== null;
 
   // Motion Pill
   if (motionBadge) {
@@ -316,18 +339,20 @@ function handleDetectionResult(camId, camName, data, capturedDataUrl, overlayEl,
   ctx.clearRect(0, 0, overlayEl.width, overlayEl.height);
 
   let identifiedTarget = null;
+  let identifiedWeapon = null;
 
+  // 1. Draw Faces (Watchlist Biometrics)
   if (data.faces && data.faces.length > 0) {
     for (const face of data.faces) {
       const [x, y, w, h] = face.bbox;
       const isMatch = face.is_match;
-      const mirroredX = overlayEl.width - x - w;
+      const boxX = isVideoFeed ? (overlayEl.width - x - w) : x;
 
       ctx.save();
       ctx.lineWidth = 3;
       ctx.strokeStyle = isMatch ? "#f85149" : "#d29922";
       ctx.fillStyle = isMatch ? "#da3633" : "#d29922";
-      ctx.strokeRect(mirroredX, y, w, h);
+      ctx.strokeRect(boxX, y, w, h);
 
       const labelText = isMatch
         ? `IDENTIFIED: ${face.name} (${face.confidence}%)`
@@ -336,17 +361,80 @@ function handleDetectionResult(camId, camName, data, capturedDataUrl, overlayEl,
       ctx.font = "bold 13px Inter, sans-serif";
       const textWidth = ctx.measureText(labelText).width;
       const tagY = y > 26 ? y - 26 : y;
-      ctx.fillRect(mirroredX, tagY, textWidth + 16, 24);
+      ctx.fillRect(boxX, tagY, textWidth + 16, 24);
 
       ctx.fillStyle = "#ffffff";
-      ctx.fillText(labelText, mirroredX + 8, tagY + 17);
+      ctx.fillText(labelText, boxX + 8, tagY + 17);
       ctx.restore();
 
       if (isMatch) identifiedTarget = face;
     }
   }
 
+  // 2. Draw Weapons (Knives, Firearms / Pistols)
+  if (data.weapons && data.weapons.length > 0) {
+    for (const weapon of data.weapons) {
+      const [x, y, w, h] = weapon.bbox;
+      const boxX = isVideoFeed ? (overlayEl.width - x - w) : x;
+
+      ctx.save();
+      // Glowing Neon Crimson Threat Box
+      ctx.shadowColor = "#ff0055";
+      ctx.shadowBlur = 12;
+      ctx.lineWidth = 3.5;
+      ctx.strokeStyle = "#ff1744";
+      ctx.strokeRect(boxX, y, w, h);
+
+      // Tech HUD corner brackets
+      const corner = Math.min(18, w * 0.25, h * 0.25);
+      ctx.lineWidth = 4;
+      ctx.strokeStyle = "#ffffff";
+      ctx.beginPath();
+      // top-left
+      ctx.moveTo(boxX, y + corner); ctx.lineTo(boxX, y); ctx.lineTo(boxX + corner, y);
+      // top-right
+      ctx.moveTo(boxX + w - corner, y); ctx.lineTo(boxX + w, y); ctx.lineTo(boxX + w, y + corner);
+      // bottom-left
+      ctx.moveTo(boxX, y + h - corner); ctx.lineTo(boxX, y + h); ctx.lineTo(boxX + corner, y + h);
+      // bottom-right
+      ctx.moveTo(boxX + w - corner, y + h); ctx.lineTo(boxX + w, y + h); ctx.lineTo(boxX + w, y + h - corner);
+      ctx.stroke();
+
+      // Weapon Label Tag
+      const icon = weapon.class === "knife" ? "🔪" : "🔫";
+      const tagText = `${icon} ARMED: ${weapon.label.toUpperCase()} (${weapon.confidence}%)`;
+
+      ctx.font = "bold 13px Inter, sans-serif";
+      const textWidth = ctx.measureText(tagText).width;
+      const tagY = y > 26 ? y - 26 : y;
+
+      ctx.fillStyle = "#d50000";
+      ctx.fillRect(boxX, tagY, textWidth + 18, 24);
+
+      ctx.fillStyle = "#ffffff";
+      ctx.fillText(tagText, boxX + 8, tagY + 17);
+      ctx.restore();
+
+      identifiedWeapon = weapon;
+    }
+  }
+
+  // Trigger Immediate Weapon Threat Alert
+  if (identifiedWeapon) {
+    playThreatTone();
+    const icon = identifiedWeapon.class === "knife" ? "🔪" : "🔫";
+    matchName.innerHTML = `<span style="color: #ff1744; font-weight: 800;">${icon} CRITICAL WEAPON DETECTED: ${identifiedWeapon.label.toUpperCase()}</span>`;
+    matchCamName.textContent = camName;
+    matchInfo.textContent = `Armed Threat: Visual Weapon Detection confirmed at ${identifiedWeapon.confidence}% confidence`;
+    matchConfidence.textContent = identifiedWeapon.confidence + "%";
+    matchAlertBox.classList.remove("hidden");
+
+    loadAlerts();
+  }
+
+  // Trigger Watchlist Player Target Alert
   if (identifiedTarget) {
+    playThreatTone();
     // Pause only this camera feed and hold view
     tile.dataset.paused = "true";
     if (holdBanner) holdBanner.classList.remove("hidden");
@@ -761,17 +849,26 @@ async function loadAlerts() {
       return;
     }
 
-    logsTbody.innerHTML = alerts.map(a => `
-      <tr>
+    logsTbody.innerHTML = alerts.map(a => {
+      const isWeapon = a.alert_type === "WEAPON_DETECTED";
+      const icon = a.weapon_type === "knife" ? "🔪" : "🔫";
+      const badgeClass = isWeapon ? "badge-weapon-alert" : "badge-alert";
+      const badgeText = isWeapon ? `${icon} ARMED WEAPON` : "WATCHLIST MATCH";
+      const nameColor = isWeapon ? "#ff1744" : "#ff7b72";
+      const rowClass = isWeapon ? "row-weapon-threat" : "";
+
+      return `
+      <tr class="${rowClass}">
         <td class="time-cell">${escapeHtml(a.timestamp)}</td>
         <td>${a.snapshot ? `<img src="${a.snapshot}" class="table-thumb" alt="snap">` : '--'}</td>
         <td><span style="font-weight: 600; color: #58a6ff;">${escapeHtml(a.camera_name || 'Main Camera')}</span></td>
-        <td class="name-cell" style="color: #ff7b72;">🚨 ${escapeHtml(a.player_name)}</td>
-        <td><span class="badge-confidence">${a.confidence}%</span></td>
+        <td class="name-cell" style="color: ${nameColor}; font-weight: 700;">${isWeapon ? icon : '🚨'} ${escapeHtml(a.player_name)}</td>
+        <td><span class="badge-confidence" style="${isWeapon ? 'background: rgba(255, 23, 68, 0.2); color: #ff1744; border-color: #ff1744;' : ''}">${a.confidence}%</span></td>
         <td class="details-cell">${escapeHtml(a.info || '--')}</td>
-        <td><span class="badge-alert">WATCHLIST ALERT</span></td>
+        <td><span class="${badgeClass}">${badgeText}</span></td>
       </tr>
-    `).join("");
+      `;
+    }).join("");
   } catch (err) {
     console.error("Failed to load alerts:", err);
   }

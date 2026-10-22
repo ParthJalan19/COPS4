@@ -297,6 +297,45 @@ def generate_alert(
     return alert
 
 
+def generate_weapon_alert(
+    weapon_class: str,
+    label: str,
+    confidence: float,
+    snapshot: str,
+    camera_id: str = "cam_main",
+    camera_name: str = "Main Surveillance"
+) -> Dict[str, Any]:
+    """Generates and logs an emergency alert when a weapon (knife/gun) is detected."""
+    alert = {
+        "id": str(uuid.uuid4()),
+        "player_id": "",
+        "player_name": f"CRITICAL: {label.upper()}",
+        "info": f"Armed Threat Detected: {label}",
+        "confidence": round(confidence, 1),
+        "snapshot": snapshot,
+        "camera_id": camera_id,
+        "camera_name": camera_name,
+        "alert_type": "WEAPON_DETECTED",
+        "weapon_type": weapon_class,
+        "timestamp": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    }
+
+    if _db is not None:
+        try:
+            doc = alert.copy()
+            doc["_id"] = doc["id"]
+            _db.alerts.insert_one(doc)
+            return alert
+        except Exception as e:
+            print(f"[Database] Error inserting weapon alert into Atlas: {e}")
+
+    data = _load_local_db()
+    data["alerts"].insert(0, alert)
+    data["alerts"] = data["alerts"][:60]
+    _save_local_db(data)
+    return alert
+
+
 def get_alerts(limit: int = 25) -> List[Dict[str, Any]]:
     """Retrieves generated alerts."""
     if _db is not None:
