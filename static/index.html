@@ -1,0 +1,240 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>COPS Watchlist & Face Detection System</title>
+  <!-- Data URI favicon to eliminate 404 error -->
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🚨</text></svg>">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+
+  <!-- Header -->
+  <header class="app-header">
+    <div class="header-left">
+      <div class="logo-icon">🚨</div>
+      <div>
+        <h1>COPS Watchlist & Player Recognition</h1>
+        <p class="subtitle">Database: <strong class="db-tag" id="current-db-name">cops_new</strong> &bull; Table: <strong class="db-tag">watchlist</strong> &bull; Motion-Triggered Alerts</p>
+      </div>
+    </div>
+    <div class="header-right">
+      <div id="db-status-badge" class="status-pill status-connecting">
+        <span class="status-dot"></span>
+        <span id="db-status-text">Checking Database...</span>
+      </div>
+    </div>
+  </header>
+
+  <!-- Database alert notification if Atlas credentials need check -->
+  <div id="db-warning-banner" class="db-banner hidden">
+    <span class="banner-icon">ℹ️</span>
+    <span id="db-warning-text" style="flex: 1;"></span>
+    <button id="btn-dismiss-db-banner" style="background: transparent; border: none; color: inherit; font-size: 18px; cursor: pointer; padding: 0 4px;">&times;</button>
+  </div>
+
+  <main class="main-container">
+    <!-- Left Column: Camera Feed, Motion Detector & Realtime Alert -->
+    <section class="card camera-card">
+      <div class="card-header">
+        <h2>Live Surveillance Camera</h2>
+        <div class="header-badges">
+          <div id="motion-badge" class="motion-pill motion-idle">
+            <span class="motion-dot"></span>
+            <span id="motion-text">Waiting for Movement</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="video-wrapper">
+        <video id="webcam" autoplay playsinline muted></video>
+        <canvas id="overlay"></canvas>
+        <div id="camera-placeholder" class="camera-placeholder">
+          <div class="placeholder-icon">📷</div>
+          <p>Camera is currently turned off</p>
+          <button id="btn-start-camera" class="btn btn-primary">Start Camera</button>
+        </div>
+        <!-- Scan paused banner overlay on video -->
+        <div id="scan-hold-banner" class="scan-hold-banner hidden">
+          <span>🎯 SCAN PAUSED: Person with Similar Face Structure Identified</span>
+        </div>
+      </div>
+
+      <!-- High Priority Alert Banner when watched player is detected -->
+      <div id="match-alert-box" class="match-alert-box alert-flashing hidden">
+        <div class="alert-icon">⚠️</div>
+        <div class="alert-details">
+          <div class="alert-title">🚨 PERSON IDENTIFIED: <span id="match-name">--</span></div>
+          <div class="alert-sub" id="match-info">--</div>
+        </div>
+        <div class="alert-score" id="match-confidence">0%</div>
+      </div>
+
+      <div class="camera-controls">
+        <button id="btn-toggle-camera" class="btn btn-secondary">Stop Camera</button>
+        <button id="btn-resume-scan" class="btn btn-primary hidden">▶️ Resume Scanning</button>
+        <label class="toggle-control">
+          <input type="checkbox" id="chk-force-scan">
+          <span>Continuous Face Scan (Bypass Motion)</span>
+        </label>
+        <div class="stat-item">
+          <span class="stat-label">Motion Area:</span>
+          <span id="stat-motion-val" class="stat-value">0 px</span>
+        </div>
+      </div>
+    </section>
+
+    <!-- Right Column: Add to Watchlist & Watchlist Table -->
+    <section class="card management-card">
+      <div class="card-header">
+        <h2>Add Player to Watchlist Table</h2>
+      </div>
+
+      <form id="upload-form" class="upload-form">
+        <div class="form-row">
+          <div class="form-group flex-1">
+            <label for="person-name">Player Name *</label>
+            <input type="text" id="person-name" placeholder="e.g. John Doe / Player #7" required>
+          </div>
+          <div class="form-group flex-2">
+            <label for="person-details">Player Info / Alert Details</label>
+            <input type="text" id="person-details" placeholder="e.g. Banned Player, VIP, Team Blue, Suspect">
+          </div>
+        </div>
+
+        <div class="form-group">
+          <label>Player Face Image *</label>
+          <div class="file-dropzone" id="dropzone">
+            <input type="file" id="person-file" accept="image/*" required>
+            <div id="dropzone-content">
+              <span class="upload-icon">📁</span>
+              <p>Drag & drop photo here or <strong>browse</strong></p>
+              <small>Front-facing, clear image recommended</small>
+            </div>
+            <img id="image-preview" class="image-preview hidden" alt="Preview">
+          </div>
+        </div>
+
+        <button type="submit" id="btn-submit" class="btn btn-primary btn-block">
+          <span id="btn-submit-text">Add Player to Watchlist Table</span>
+        </button>
+      </form>
+
+      <!-- Watchlist Table (cops_new.watchlist) -->
+      <div class="table-section">
+        <div class="table-header-row">
+          <h3>Watchlist Table (<span id="persons-count">0</span> Players)</h3>
+          <button id="btn-refresh-persons" class="btn btn-sm btn-outline">Refresh</button>
+        </div>
+
+        <div class="table-responsive">
+          <table class="simple-table" id="persons-table">
+            <thead>
+              <tr>
+                <th style="width: 55px;">Photo</th>
+                <th>Player Name</th>
+                <th>Info</th>
+                <th style="width: 90px;">Status</th>
+                <th style="width: 65px;">Action</th>
+              </tr>
+            </thead>
+            <tbody id="persons-tbody">
+              <tr>
+                <td colspan="5" class="table-empty">No players on watchlist yet. Add someone above.</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <!-- Bottom Section: Generated Alerts Table -->
+  <section class="card logs-card">
+    <div class="card-header">
+      <h2>Generated Alerts Table (cops_new.alerts)</h2>
+      <div style="display: flex; gap: 8px;">
+        <button id="btn-refresh-alerts" class="btn btn-sm btn-outline">Refresh Alerts</button>
+        <button id="btn-clear-logs" class="btn btn-sm btn-danger">Clear Alerts</button>
+      </div>
+    </div>
+    <div class="table-responsive">
+      <table class="simple-table" id="logs-table">
+        <thead>
+          <tr>
+            <th style="width: 150px;">Alert Timestamp</th>
+            <th style="width: 60px;">Snapshot</th>
+            <th>Detected Player</th>
+            <th>Confidence</th>
+            <th>Player Info</th>
+            <th>Alert Type</th>
+          </tr>
+        </thead>
+        <tbody id="logs-tbody">
+          <tr>
+            <td colspan="6" class="table-empty">No alerts triggered yet. Movement + watched player detection will generate alerts here.</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- Visual Popup Alert Modal (No Noise, Clean Popup Alert) -->
+  <div id="alert-modal" class="modal-backdrop hidden">
+    <div class="modal-card">
+      <div class="modal-header">
+        <div class="modal-title-row">
+          <span class="modal-alert-icon">🚨</span>
+          <div>
+            <h3>WATCHLIST TARGET IDENTIFIED</h3>
+            <p class="modal-subtitle">Similar Facial Structure & Biometrics Detected</p>
+          </div>
+        </div>
+        <button id="btn-modal-close" class="modal-close-btn">&times;</button>
+      </div>
+
+      <div class="modal-body">
+        <div class="comparison-grid">
+          <div class="comparison-card">
+            <span class="comp-label">Live Camera Match</span>
+            <img id="modal-live-img" class="comp-img" alt="Live Match">
+          </div>
+          <div class="comparison-card">
+            <span class="comp-label">Registered Target Photo</span>
+            <img id="modal-registered-img" class="comp-img" alt="Registered Photo">
+          </div>
+        </div>
+
+        <div class="modal-info-box">
+          <div class="info-row">
+            <span class="info-label">Identified Person:</span>
+            <span id="modal-person-name" class="info-val strong">--</span>
+          </div>
+          <div class="info-row">
+            <span class="info-label">Facial Structure Match:</span>
+            <span id="modal-confidence" class="badge-confidence">--</span>
+          </div>
+          <div class="info-row">
+            <span class="info-label">Player Info / Details:</span>
+            <span id="modal-details" class="info-val">--</span>
+          </div>
+          <div class="info-row">
+            <span class="info-label">Surveillance Status:</span>
+            <span class="status-paused-tag">⚠️ SCAN STOPPED & HELD ON TARGET</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="modal-footer">
+        <button id="btn-modal-resume" class="btn btn-primary btn-block">Resume Active Scanning</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>

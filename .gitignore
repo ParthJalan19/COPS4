@@ -1,0 +1,23 @@
+# Environment & Secrets (Never commit credentials!)
+.env
+
+# Python artifacts
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.pytest_cache/
+
+# Local database fallbacks
+*.json
+!mcp_config.json
+
+# IDE & Editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS files
+Thumbs.db
+.DS_Store
