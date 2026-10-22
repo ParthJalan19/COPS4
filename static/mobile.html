@@ -1,0 +1,329 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, maximum-scale=1.0">
+  <title>COPS Mobile Surveillance Node</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📱</text></svg>">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&family=JetBrains+Mono:wght@500;700&display=swap" rel="stylesheet">
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      background: #000;
+      color: #fff;
+      font-family: 'Inter', sans-serif;
+      height: 100vh;
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+    }
+    .mobile-header {
+      position: absolute;
+      top: 0;
+      left: 0;
+      right: 0;
+      background: linear-gradient(180deg, rgba(0,0,0,0.85) 0%, transparent 100%);
+      padding: 16px 20px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      z-index: 20;
+    }
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      font-size: 15px;
+      font-weight: 700;
+    }
+    .status-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 5px 12px;
+      border-radius: 20px;
+      font-size: 12px;
+      font-weight: 600;
+      background: rgba(218, 54, 51, 0.3);
+      color: #ff7b72;
+      border: 1px solid #da3633;
+    }
+    .status-badge.streaming {
+      background: rgba(46, 160, 67, 0.3);
+      color: #3fb950;
+      border-color: #2ea043;
+    }
+    .status-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: currentColor;
+    }
+    .video-viewport {
+      flex: 1;
+      position: relative;
+      background: #0d1117;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+    }
+    video {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+    }
+    canvas {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      pointer-events: none;
+    }
+    .mobile-footer {
+      position: absolute;
+      bottom: 0;
+      left: 0;
+      right: 0;
+      background: linear-gradient(0deg, rgba(0,0,0,0.9) 0%, transparent 100%);
+      padding: 24px 20px;
+      display: flex;
+      justify-content: space-around;
+      align-items: center;
+      z-index: 20;
+    }
+    .ctrl-btn {
+      background: rgba(255, 255, 255, 0.15);
+      border: 1px solid rgba(255, 255, 255, 0.25);
+      color: #fff;
+      font-size: 14px;
+      font-weight: 600;
+      padding: 12px 20px;
+      border-radius: 30px;
+      cursor: pointer;
+      backdrop-filter: blur(8px);
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      outline: none;
+    }
+    .ctrl-btn.active {
+      background: #238636;
+      border-color: #2ea043;
+    }
+    .alert-banner {
+      position: absolute;
+      top: 75px;
+      left: 16px;
+      right: 16px;
+      background: rgba(218, 54, 51, 0.95);
+      color: #fff;
+      padding: 12px 16px;
+      border-radius: 8px;
+      box-shadow: 0 4px 20px rgba(0,0,0,0.6);
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      z-index: 25;
+      animation: pulse 0.8s infinite alternate;
+    }
+    .alert-banner.hidden { display: none; }
+    @keyframes pulse {
+      from { opacity: 0.9; transform: scale(0.99); }
+      to { opacity: 1; transform: scale(1.01); }
+    }
+  </style>
+</head>
+<body>
+
+  <div class="mobile-header">
+    <div class="brand">
+      <span>📱</span>
+      <span id="cam-title">Mobile Camera Node</span>
+    </div>
+    <div id="status-pill" class="status-badge">
+      <span class="status-dot"></span>
+      <span id="status-text">Standby</span>
+    </div>
+  </div>
+
+  <div class="video-viewport">
+    <video id="phone-video" autoplay playsinline muted></video>
+    <canvas id="phone-canvas"></canvas>
+
+    <div id="match-banner" class="alert-banner hidden">
+      <span style="font-size: 24px;">🚨</span>
+      <div>
+        <div style="font-weight: 700; font-size: 14px;">TARGET IDENTIFIED: <span id="match-target-name">--</span></div>
+        <div style="font-size: 12px; opacity: 0.9;" id="match-target-info">--</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="mobile-footer">
+    <button id="btn-toggle-stream" class="ctrl-btn active">🔴 Stop Stream</button>
+    <button id="btn-flip-cam" class="ctrl-btn">🔄 Flip Camera</button>
+  </div>
+
+  <script>
+    const urlParams = new URLSearchParams(window.location.search);
+    const cameraId = urlParams.get("cam_id") || "mobile_1";
+    const cameraName = urlParams.get("name") || "Mobile Phone Camera";
+
+    document.getElementById("cam-title").textContent = cameraName;
+
+    const video = document.getElementById("phone-video");
+    const canvas = document.getElementById("phone-canvas");
+    const ctx = canvas.getContext("2d");
+    const statusPill = document.getElementById("status-pill");
+    const statusText = document.getElementById("status-text");
+    const btnToggleStream = document.getElementById("btn-toggle-stream");
+    const btnFlipCam = document.getElementById("btn-flip-cam");
+    const matchBanner = document.getElementById("match-banner");
+    const matchTargetName = document.getElementById("match-target-name");
+    const matchTargetInfo = document.getElementById("match-target-info");
+
+    let currentStream = null;
+    let facingMode = "environment"; // default to rear back camera for mobile surveillance
+    let isStreaming = true;
+    let streamInterval = null;
+    let isSending = false;
+
+    async function initCamera() {
+      if (currentStream) {
+        currentStream.getTracks().forEach(t => t.stop());
+      }
+
+      try {
+        currentStream = await navigator.mediaDevices.getUserMedia({
+          video: {
+            facingMode: { ideal: facingMode },
+            width: { ideal: 640 },
+            height: { ideal: 480 }
+          },
+          audio: false
+        });
+
+        video.srcObject = currentStream;
+        video.onloadedmetadata = () => {
+          canvas.width = video.videoWidth;
+          canvas.height = video.videoHeight;
+          startStreamingLoop();
+        };
+
+        statusPill.className = "status-badge streaming";
+        statusText.textContent = "Live Stream Active";
+      } catch (err) {
+        alert("Camera error: " + err.message);
+        statusPill.className = "status-badge";
+        statusText.textContent = "Camera Error";
+      }
+    }
+
+    function startStreamingLoop() {
+      if (streamInterval) clearInterval(streamInterval);
+
+      const off = document.createElement("canvas");
+      const offCtx = off.getContext("2d");
+
+      // Send frame every ~200ms (5 FPS)
+      streamInterval = setInterval(async () => {
+        if (!isStreaming || isSending || !video.videoWidth) return;
+
+        isSending = true;
+        try {
+          off.width = 480;
+          off.height = Math.round(480 * (video.videoHeight / video.videoWidth));
+          offCtx.drawImage(video, 0, 0, off.width, off.height);
+
+          const b64 = off.toDataURL("image/jpeg", 0.7);
+
+          const res = await fetch("/api/mobile/frame", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              camera_id: cameraId,
+              camera_name: cameraName,
+              image: b64,
+              force_recognition: true
+            })
+          });
+
+          if (res.ok) {
+            const data = await res.json();
+            drawDetections(data);
+          }
+        } catch (e) {
+          console.warn("Stream frame failed:", e);
+        } finally {
+          isSending = false;
+        }
+      }, 200);
+    }
+
+    function drawDetections(data) {
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      let matched = null;
+
+      if (data.faces && data.faces.length > 0) {
+        const scaleX = canvas.width / 480;
+        const scaleY = canvas.height / (480 * (video.videoHeight / video.videoWidth));
+
+        for (const face of data.faces) {
+          const [x, y, w, h] = face.bbox;
+          const sx = x * scaleX;
+          const sy = y * scaleY;
+          const sw = w * scaleX;
+          const sh = h * scaleY;
+
+          ctx.lineWidth = 4;
+          ctx.strokeStyle = face.is_match ? "#ff7b72" : "#e3b341";
+          ctx.strokeRect(sx, sy, sw, sh);
+
+          ctx.fillStyle = face.is_match ? "#da3633" : "#d29922";
+          const label = face.is_match ? `🚨 ${face.name} (${face.confidence}%)` : "Unrecognized";
+          ctx.font = "bold 16px Inter, sans-serif";
+          ctx.fillRect(sx, sy > 30 ? sy - 30 : sy, ctx.measureText(label).width + 16, 28);
+          ctx.fillStyle = "#fff";
+          ctx.fillText(label, sx + 8, sy > 30 ? sy - 10 : sy + 20);
+
+          if (face.is_match) matched = face;
+        }
+      }
+
+      if (matched) {
+        matchTargetName.textContent = matched.name;
+        matchTargetInfo.textContent = `${matched.confidence}% Face Structure Match`;
+        matchBanner.classList.remove("hidden");
+      } else {
+        matchBanner.classList.add("hidden");
+      }
+    }
+
+    btnToggleStream.addEventListener("click", () => {
+      isStreaming = !isStreaming;
+      if (isStreaming) {
+        btnToggleStream.textContent = "🔴 Stop Stream";
+        btnToggleStream.className = "ctrl-btn active";
+        statusPill.className = "status-badge streaming";
+        statusText.textContent = "Live Stream Active";
+      } else {
+        btnToggleStream.textContent = "▶️ Start Stream";
+        btnToggleStream.className = "ctrl-btn";
+        statusPill.className = "status-badge";
+        statusText.textContent = "Stream Paused";
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        matchBanner.classList.add("hidden");
+      }
+    });
+
+    btnFlipCam.addEventListener("click", () => {
+      facingMode = facingMode === "environment" ? "user" : "environment";
+      initCamera();
+    });
+
+    initCamera();
+  </script>
+</body>
+</html>

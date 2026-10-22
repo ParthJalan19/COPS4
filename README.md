@@ -1,43 +1,31 @@
-# COPS Watchlist Face Recognition & Alert System
+# COPS Multi-Camera Surveillance Wall & Face Recognition
 
-A real-time face detection, recognition, and motion tracking web application built with **FastAPI**, **OpenCV YuNet + SFace Biometrics**, and **MongoDB Atlas**.
+A real-time multi-camera surveillance wall, face detection, recognition, and motion tracking web application built with **FastAPI**, **OpenCV YuNet + SFace Biometrics**, and **MongoDB Atlas**.
 
 ---
 
-## Database & Tables
+## What's New: Surveillance Camera Wall
+
+- **Multi-Camera Grid**:
+  - Dynamic **1x1 Focus Mode**, **2x2 Grid (4 Cams)**, and **3x3 Grid (9 Cams)**.
+  - Fullscreen focus on any camera tile with a single click.
+- **Multiple Camera Sources**:
+  1. **Laptop & USB Webcams**: Connects directly to internal webcams and USB cameras attached to the computer.
+  2. **Mobile Phone Cameras (Wireless)**: Turn any smartphone (iPhone/Android) into a wireless camera node by scanning the on-screen QR code or opening `http://<your-ip>:8000/mobile`. Features rear/front camera switching and live video streaming.
+  3. **CCTV / IP Camera Streams**: Connect RTSP or HTTP MJPEG camera streams (e.g., CCTV DVR, Dahua, Hikvision, or the mobile app *IP Webcam*).
+- **Independent Facial Recognition per Camera**:
+  - Each camera stream runs independent face detection and movement tracking.
+  - When a watched target is identified on any camera, that specific camera tile halts to display the target while other cameras continue monitoring.
+  - The alert log records the exact camera source (e.g. `Main Entrance - CCTV`, `Patrol Phone Cam`, `Laptop Webcam`).
+
+---
+
+## Database & Collections (MongoDB Atlas)
 
 - **Database**: `cops_new`
-- **Watchlist Table**: `watchlist`
-  - Stores watched players/persons with name, alert details/info, face biometrics (128-d deep vector), and photo.
-- **Generated Alerts Table**: `alerts`
-  - Automatically records an alert whenever a watched player is detected by the camera upon movement.
-  - Stores alert timestamp, detected player name, snapshot thumbnail, match confidence %, and alert notes.
-
----
-
-## Features
-
-1. **Watchlist Registration**:
-   - Add any player/person to the `watchlist` table with their photo and info.
-   - Extracts 128-dimensional deep face biometrics using OpenCV SFace ONNX.
-
-2. **Movement & Player Detection**:
-   - Live camera stream in browser.
-   - **Motion Detection**: Tracks changes between frames using Gaussian difference and contour area analysis.
-   - When motion is detected, scans faces and compares against the `watchlist` table.
-   - **Instant Alert Generation**:
-     - Flashes an emergency red alert banner on screen.
-     - Plays an audio siren alert.
-     - Logs the event and snapshot directly into the `alerts` table in database `cops_new`.
-
-3. **MongoDB Atlas Configuration**:
-   - Configured in `.env`:
-     ```env
-     MONGODB_URI="mongodb+srv://parthjalan18476_db_user:Parth%40!357@cluster0.sqtjclf.mongodb.net/cops_new?retryWrites=true&w=majority"
-     MONGODB_DB_NAME="cops_new"
-     USE_MOCK_DB=false
-     ```
-   - Automatically maintains a local fallback table if Atlas credentials fail authentication, ensuring 100% uptime.
+- **Watchlist Table**: `watchlist` (registered targets with 128-d deep facial embeddings)
+- **Generated Alerts Table**: `alerts` (detection logs with timestamp, camera name, and snapshot)
+- **Cameras Table**: `cameras` (persisted camera feed configurations)
 
 ---
 
@@ -45,11 +33,13 @@ A real-time face detection, recognition, and motion tracking web application bui
 
 1. Start the server:
    ```bash
-   python -m uvicorn main:app --host 127.0.0.1 --port 8000
+   python -m uvicorn main:app --host 0.0.0.0 --port 8000
    ```
    Or double-click `start.bat`.
 
-2. Open your browser:
-   ```
-   http://127.0.0.1:8000
-   ```
+2. Open the main surveillance wall:
+   👉 **[http://localhost:8000](http://localhost:8000)**
+
+3. Connect a mobile phone camera:
+   - Click **"+ Add Camera Feed"** → **Mobile Phone** tab.
+   - Scan the QR code with your phone or open the link on your phone browser.

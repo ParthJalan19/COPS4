@@ -2,18 +2,21 @@ import os
 import io
 import time
 import base64
+import socket
 import cv2
 import numpy as np
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse, JSONResponse, Response
+from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
 from pydantic import BaseModel
+from typing import Optional, List
 
 import database
 from face_engine import FaceEngine
+from ip_camera import stream_manager
 
-app = FastAPI(title="COPS Watchlist & Face Detection System", version="2.0.0")
+app = FastAPI(title="COPS Camera Wall & Face Recognition System", version="3.0.0")
 
 @app.get("/favicon.ico", include_in_schema=False)
 def favicon():
@@ -29,7 +32,7 @@ app.add_middleware(
 
 face_engine = FaceEngine()
 
-# Throttle alerts so the same player isn't spamming alerts every 200ms
+# Throttle alerts per player/camera so we don't spam alerts every frame
 _last_alert_times = {}
 
 STATIC_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
@@ -39,6 +42,45 @@ os.makedirs(STATIC_DIR, exist_ok=True)
 class DetectRequest(BaseModel):
     image: str
     force_recognition: bool = False
+    camera_id: Optional[str] = "cam_main"
+    camera_name: Optional[str] = "Main Camera"
+
+
+class MobileFrameRequest(BaseModel):
+    camera_id: str
+    camera_name: Optional[str] = "Mobile Phone Camera"
+    image: str
+    force_recognition: bool = True
+
+
+class CameraConfigRequest(BaseModel):
+    id: str
+    name: str
+    type: str  # 'webcam', 'mobile', 'cctv_ip'
+    stream_url: Optional[str] = ""
+    device_id: Optional[str] = ""
+
+
+def get_local_ip():
+    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    try:
+        s.connect(('8.8.8.8', 80))
+        ip = s.getsockname()[0]
+    except Exception:
+        ip = '127.0.0.1'
+    finally:
+        s.close()
+    return ip
+
+
+# Re-initialize any persisted CCTV streams on startup
+def _restore_cctv_streams():
+    cams = database.get_cameras()
+    for cam in cams:
+        if cam.get("type") == "cctv_ip" and cam.get("stream_url"):
+            stream_manager.add_cctv_stream(cam["id"], cam["stream_url"])
+
+_restore_cctv_streams()
 
 
 @app.get("/api/status")
@@ -46,20 +88,149 @@ def get_status():
     db_status = database.get_db_status()
     watchlist = database.get_watchlist()
     alerts = database.get_alerts(limit=5)
+    cameras = database.get_cameras()
     return {
         "status": "online",
         "database": db_status,
         "database_name": db_status.get("db_name", "cops_new"),
         "watchlist_table": "watchlist",
         "alerts_table": "alerts",
+        "cameras_table": "cameras",
         "watchlist_count": len(watchlist),
         "recent_alerts_count": len(alerts),
+        "camera_count": len(cameras),
+        "network_ip": get_local_ip(),
         "models_loaded": {
             "face_detector": "OpenCV YuNet ONNX (face_detection_yunet)",
             "face_recognizer": "OpenCV SFace ONNX (face_recognition_sface)",
             "motion_detector": "Frame Differencing & Contour Area"
         }
     }
+
+
+@app.get("/api/network-ip")
+def get_network_ip_endpoint():
+    ip = get_local_ip()
+    port = int(os.getenv("PORT", 8000))
+    return {
+        "ip": ip,
+        "port": port,
+        "mobile_url": f"http://{ip}:{port}/mobile"
+    }
+
+
+# ---------------- CAMERA MANAGEMENT (CAMERA WALL) ----------------
+@app.get("/api/cameras")
+def list_cameras():
+    return database.get_cameras()
+
+
+@app.post("/api/cameras")
+def add_camera_endpoint(req: CameraConfigRequest):
+    cam = database.save_camera(
+        cam_id=req.id,
+        name=req.name,
+        cam_type=req.type,
+        stream_url=req.stream_url,
+        device_id=req.device_id
+    )
+    if req.type == "cctv_ip" and req.stream_url:
+        stream_manager.add_cctv_stream(req.id, req.stream_url)
+
+    return {"success": True, "camera": cam}
+
+
+@app.delete("/api/cameras/{camera_id}")
+def delete_camera_endpoint(camera_id: str):
+    stream_manager.remove_stream(camera_id)
+    success = database.delete_camera(camera_id)
+    return {"success": success}
+
+
+@app.get("/api/stream/{camera_id}")
+def stream_camera(camera_id: str):
+    """Streams live MJPEG frames for CCTV / IP cameras."""
+    return StreamingResponse(
+        stream_manager.generate_mjpeg_stream(camera_id),
+        media_type="multipart/x-mixed-replace; boundary=frame"
+    )
+
+
+# ---------------- MOBILE CAMERA STREAM ----------------
+@app.post("/api/mobile/frame")
+def mobile_frame_endpoint(req: MobileFrameRequest):
+    img_data = req.image
+    if not img_data:
+        raise HTTPException(status_code=400, detail="No image provided")
+
+    if "," in img_data:
+        img_data = img_data.split(",", 1)[1]
+
+    try:
+        raw_bytes = base64.b64decode(img_data)
+        nparr = np.frombuffer(raw_bytes, np.uint8)
+        frame = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Invalid image: {e}")
+
+    if frame is None:
+        raise HTTPException(status_code=400, detail="Could not decode frame")
+
+    # Store frame in StreamManager so the camera wall tile can display it
+    stream_manager.set_mobile_frame(req.camera_id, frame)
+
+    # Process recognition on frame
+    watchlist_players = database.get_watchlist()
+    result = face_engine.process_frame(
+        frame_bgr=frame,
+        known_persons=watchlist_players,
+        force_recognition=req.force_recognition
+    )
+
+    now = time.time()
+    generated_alerts = []
+
+    for face in result.get("faces", []):
+        if face.get("is_match") and face.get("person_id"):
+            pid = face["person_id"]
+            key = f"{req.camera_id}_{pid}"
+            last_alert = _last_alert_times.get(key, 0)
+            if now - last_alert > 3.5:
+                _last_alert_times[key] = now
+                x, y, w, h = face["bbox"]
+                fh, fw = frame.shape[:2]
+                pad_x = int(w * 0.25)
+                pad_y = int(h * 0.25)
+                crop = frame[max(0, y - pad_y):min(fh, y + h + pad_y), max(0, x - pad_x):min(fw, x + w + pad_x)]
+                snap_b64 = ""
+                if crop.size > 0:
+                    _, buf = cv2.imencode(".jpg", crop, [cv2.IMWRITE_JPEG_QUALITY, 85])
+                    snap_b64 = "data:image/jpeg;base64," + base64.b64encode(buf.tobytes()).decode("utf-8")
+
+                alert_record = database.generate_alert(
+                    player_id=pid,
+                    player_name=face["name"],
+                    info=face.get("info", ""),
+                    confidence=face["confidence"] / 100.0,
+                    snapshot=snap_b64,
+                    camera_id=req.camera_id,
+                    camera_name=req.camera_name or "Mobile Phone Camera"
+                )
+                generated_alerts.append(alert_record)
+
+    result["alerts_generated"] = generated_alerts
+    result["has_alert"] = len(generated_alerts) > 0
+    return result
+
+
+@app.get("/api/mobile/frame/{camera_id}")
+def get_mobile_frame_preview(camera_id: str):
+    """Returns the latest snapshot of a mobile camera for wall rendering."""
+    frame = stream_manager.get_latest_frame(camera_id)
+    if frame is None:
+        return Response(status_code=404)
+    _, buf = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 80])
+    return Response(content=buf.tobytes(), media_type="image/jpeg")
 
 
 # ---------------- WATCHLIST ENDPOINTS ----------------
@@ -80,7 +251,6 @@ def list_watchlist():
     return cleaned
 
 
-# Aliases for backwards compatibility
 @app.get("/api/persons")
 def list_persons_alias():
     return list_watchlist()
@@ -99,15 +269,12 @@ async def add_watchlist_endpoint(
     if len(contents) == 0:
         raise HTTPException(status_code=400, detail="Uploaded photo is empty")
 
-    # Extract face embedding
     embedding, bbox, err = face_engine.extract_face_embedding(contents)
     if err or embedding is None:
         raise HTTPException(status_code=400, detail=err or "Face extraction failed")
 
-    # Convert to base64 preview
     img_b64 = "data:image/jpeg;base64," + base64.b64encode(contents).decode("utf-8")
 
-    # Save to MongoDB Atlas (cops_new.watchlist)
     record = database.add_to_watchlist(
         name=name.strip(),
         info=info.strip(),
@@ -163,11 +330,9 @@ def detect_endpoint(req: DetectRequest):
     if frame is None:
         raise HTTPException(status_code=400, detail="Could not decode frame")
 
-    # Fetch players from watchlist
     watchlist_players = database.get_watchlist()
     players_by_id = {p["id"]: p for p in watchlist_players}
 
-    # Process frame
     result = face_engine.process_frame(
         frame_bgr=frame,
         known_persons=watchlist_players,
@@ -177,14 +342,12 @@ def detect_endpoint(req: DetectRequest):
     now = time.time()
     generated_alerts = []
 
-    # Check for matched players
     for face in result.get("faces", []):
         if face.get("is_match") and face.get("person_id"):
             pid = face["person_id"]
             player_obj = players_by_id.get(pid, {})
             face["registered_image"] = player_obj.get("image", "")
 
-            # Capture snapshot thumbnail
             x, y, w, h = face["bbox"]
             fh, fw = frame.shape[:2]
             pad_x = int(w * 0.25)
@@ -201,15 +364,18 @@ def detect_endpoint(req: DetectRequest):
                 snap_b64 = "data:image/jpeg;base64," + base64.b64encode(buf.tobytes()).decode("utf-8")
             face["snapshot"] = snap_b64
 
-            last_alert = _last_alert_times.get(pid, 0)
+            key = f"{req.camera_id or 'cam_main'}_{pid}"
+            last_alert = _last_alert_times.get(key, 0)
             if now - last_alert > 3.0:
-                _last_alert_times[pid] = now
+                _last_alert_times[key] = now
                 alert_record = database.generate_alert(
                     player_id=pid,
                     player_name=face["name"],
                     info=face.get("info", face.get("details", "")),
                     confidence=face["confidence"] / 100.0,
-                    snapshot=snap_b64
+                    snapshot=snap_b64,
+                    camera_id=req.camera_id or "cam_main",
+                    camera_name=req.camera_name or "Main Surveillance"
                 )
                 generated_alerts.append(alert_record)
 
@@ -237,6 +403,14 @@ def clear_alerts_endpoint():
 
 # Mount static assets
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
+
+
+@app.get("/mobile")
+def serve_mobile_page():
+    mobile_file = os.path.join(STATIC_DIR, "mobile.html")
+    if os.path.exists(mobile_file):
+        return FileResponse(mobile_file)
+    return JSONResponse({"message": "Mobile streaming page not found"})
 
 
 @app.get("/")

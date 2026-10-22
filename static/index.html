@@ -3,12 +3,12 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>COPS Watchlist & Face Detection System</title>
+  <title>COPS Surveillance Camera Wall & Face Recognition</title>
   <!-- Data URI favicon to eliminate 404 error -->
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🚨</text></svg>">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
@@ -18,11 +18,12 @@
     <div class="header-left">
       <div class="logo-icon">🚨</div>
       <div>
-        <h1>COPS Watchlist & Player Recognition</h1>
-        <p class="subtitle">Database: <strong class="db-tag" id="current-db-name">cops_new</strong> &bull; Table: <strong class="db-tag">watchlist</strong> &bull; Motion-Triggered Alerts</p>
+        <h1>COPS Multi-Camera Surveillance Wall</h1>
+        <p class="subtitle">Database: <strong class="db-tag" id="current-db-name">cops_new</strong> &bull; Table: <strong class="db-tag">watchlist</strong> &bull; Multi-Camera CCTV, Mobile & Webcam Feeds</p>
       </div>
     </div>
     <div class="header-right">
+      <button id="btn-open-add-camera" class="btn btn-primary" style="margin-right: 12px;">+ Add Camera Feed</button>
       <div id="db-status-badge" class="status-pill status-connecting">
         <span class="status-dot"></span>
         <span id="db-status-text">Checking Database...</span>
@@ -38,29 +39,57 @@
   </div>
 
   <main class="main-container">
-    <!-- Left Column: Camera Feed, Motion Detector & Realtime Alert -->
+    <!-- Left Column: Camera Wall Grid -->
     <section class="card camera-card">
       <div class="card-header">
-        <h2>Live Surveillance Camera</h2>
-        <div class="header-badges">
-          <div id="motion-badge" class="motion-pill motion-idle">
-            <span class="motion-dot"></span>
-            <span id="motion-text">Waiting for Movement</span>
-          </div>
+        <div style="display: flex; align-items: center; gap: 10px;">
+          <h2>Surveillance Camera Wall</h2>
+          <span class="cam-count-badge" id="active-cams-count">1 Active Feed</span>
+        </div>
+        <div class="grid-controls">
+          <span class="ctrl-label">Grid Layout:</span>
+          <button class="btn btn-sm btn-outline grid-btn" data-grid="1x1">1x1 Focus</button>
+          <button class="btn btn-sm btn-outline grid-btn active" data-grid="2x2">2x2 Grid</button>
+          <button class="btn btn-sm btn-outline grid-btn" data-grid="3x3">3x3 Grid</button>
         </div>
       </div>
 
-      <div class="video-wrapper">
-        <video id="webcam" autoplay playsinline muted></video>
-        <canvas id="overlay"></canvas>
-        <div id="camera-placeholder" class="camera-placeholder">
-          <div class="placeholder-icon">📷</div>
-          <p>Camera is currently turned off</p>
-          <button id="btn-start-camera" class="btn btn-primary">Start Camera</button>
-        </div>
-        <!-- Scan paused banner overlay on video -->
-        <div id="scan-hold-banner" class="scan-hold-banner hidden">
-          <span>🎯 SCAN PAUSED: Person with Similar Face Structure Identified</span>
+      <!-- Dynamic Camera Wall Grid Container -->
+      <div id="camera-wall-grid" class="camera-wall-grid grid-2x2">
+        <!-- Default Primary Webcam Tile (pre-rendered) -->
+        <div class="camera-tile" id="tile-cam_default" data-cam-id="cam_default" data-cam-type="webcam">
+          <div class="tile-header">
+            <div class="tile-title">
+              <span class="tile-icon">💻</span>
+              <span class="tile-name">Laptop / Primary Webcam</span>
+            </div>
+            <div class="tile-badges">
+              <div class="motion-pill motion-idle" id="motion-badge-cam_default">
+                <span class="motion-dot"></span>
+                <span class="motion-text">Waiting</span>
+              </div>
+              <button class="btn-tile-focus" title="Toggle Fullscreen Focus" onclick="toggleFocusCamera('cam_default')">⛶</button>
+            </div>
+          </div>
+
+          <div class="tile-video-wrapper">
+            <video id="webcam-cam_default" autoplay playsinline muted></video>
+            <canvas id="overlay-cam_default"></canvas>
+            <div id="placeholder-cam_default" class="camera-placeholder">
+              <div class="placeholder-icon">📷</div>
+              <p>Webcam is currently off</p>
+              <button class="btn btn-primary btn-sm" onclick="startPrimaryWebcam()">Start Webcam</button>
+            </div>
+            <div id="hold-banner-cam_default" class="scan-hold-banner hidden">
+              <span>🎯 TARGET IDENTIFIED ON THIS FEED</span>
+            </div>
+          </div>
+
+          <div class="tile-footer">
+            <button class="btn btn-sm btn-secondary" id="btn-toggle-cam_default" onclick="togglePrimaryWebcam()">Stop Webcam</button>
+            <button class="btn btn-sm btn-primary hidden" id="btn-resume-cam_default" onclick="resumeCameraScan('cam_default')">Resume Scan</button>
+            <span class="tile-stat" id="stat-cam_default">0 px motion</span>
+          </div>
         </div>
       </div>
 
@@ -68,23 +97,10 @@
       <div id="match-alert-box" class="match-alert-box alert-flashing hidden">
         <div class="alert-icon">⚠️</div>
         <div class="alert-details">
-          <div class="alert-title">🚨 PERSON IDENTIFIED: <span id="match-name">--</span></div>
+          <div class="alert-title">🚨 TARGET IDENTIFIED: <span id="match-name">--</span> (<span id="match-cam-name">--</span>)</div>
           <div class="alert-sub" id="match-info">--</div>
         </div>
         <div class="alert-score" id="match-confidence">0%</div>
-      </div>
-
-      <div class="camera-controls">
-        <button id="btn-toggle-camera" class="btn btn-secondary">Stop Camera</button>
-        <button id="btn-resume-scan" class="btn btn-primary hidden">▶️ Resume Scanning</button>
-        <label class="toggle-control">
-          <input type="checkbox" id="chk-force-scan">
-          <span>Continuous Face Scan (Bypass Motion)</span>
-        </label>
-        <div class="stat-item">
-          <span class="stat-label">Motion Area:</span>
-          <span id="stat-motion-val" class="stat-value">0 px</span>
-        </div>
       </div>
     </section>
 
@@ -138,7 +154,7 @@
                 <th style="width: 55px;">Photo</th>
                 <th>Player Name</th>
                 <th>Info</th>
-                <th style="width: 90px;">Status</th>
+                <th style="width: 85px;">Status</th>
                 <th style="width: 65px;">Action</th>
               </tr>
             </thead>
@@ -166,8 +182,9 @@
       <table class="simple-table" id="logs-table">
         <thead>
           <tr>
-            <th style="width: 150px;">Alert Timestamp</th>
+            <th style="width: 140px;">Alert Timestamp</th>
             <th style="width: 60px;">Snapshot</th>
+            <th style="width: 150px;">Camera Source</th>
             <th>Detected Player</th>
             <th>Confidence</th>
             <th>Player Info</th>
@@ -176,7 +193,7 @@
         </thead>
         <tbody id="logs-tbody">
           <tr>
-            <td colspan="6" class="table-empty">No alerts triggered yet. Movement + watched player detection will generate alerts here.</td>
+            <td colspan="7" class="table-empty">No alerts triggered yet. Movement + watched player detection will generate alerts here.</td>
           </tr>
         </tbody>
       </table>
@@ -215,6 +232,10 @@
             <span id="modal-person-name" class="info-val strong">--</span>
           </div>
           <div class="info-row">
+            <span class="info-label">Camera Source:</span>
+            <span id="modal-camera-name" class="info-val strong" style="color: #58a6ff;">--</span>
+          </div>
+          <div class="info-row">
             <span class="info-label">Facial Structure Match:</span>
             <span id="modal-confidence" class="badge-confidence">--</span>
           </div>
@@ -224,13 +245,105 @@
           </div>
           <div class="info-row">
             <span class="info-label">Surveillance Status:</span>
-            <span class="status-paused-tag">⚠️ SCAN STOPPED & HELD ON TARGET</span>
+            <span class="status-paused-tag">⚠️ SCAN HELD ON THIS FEED</span>
           </div>
         </div>
       </div>
 
       <div class="modal-footer">
         <button id="btn-modal-resume" class="btn btn-primary btn-block">Resume Active Scanning</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Add Camera Feed Modal -->
+  <div id="add-camera-modal" class="modal-backdrop hidden">
+    <div class="modal-card" style="max-width: 580px;">
+      <div class="modal-header">
+        <div class="modal-title-row">
+          <span class="modal-alert-icon">📹</span>
+          <div>
+            <h3>Add Surveillance Camera Feed</h3>
+            <p class="modal-subtitle">Connect Laptop/USB Webcams, Mobile Phones, or CCTV IP Streams</p>
+          </div>
+        </div>
+        <button id="btn-close-add-camera" class="modal-close-btn">&times;</button>
+      </div>
+
+      <!-- Tabs Navigation -->
+      <div class="tab-nav">
+        <button class="tab-btn active" data-tab="tab-mobile">📱 Mobile Phone</button>
+        <button class="tab-btn" data-tab="tab-cctv">📹 CCTV / IP Stream</button>
+        <button class="tab-btn" data-tab="tab-webcam">💻 USB / Laptop Cam</button>
+      </div>
+
+      <div class="modal-body">
+        <!-- Tab 1: Mobile Phone Camera -->
+        <div id="tab-mobile" class="tab-content active">
+          <p style="font-size: 13px; color: var(--text-secondary); margin-bottom: 14px;">
+            Turn any iPhone or Android phone into an HD wireless surveillance camera! Open the link or scan the QR code on your phone:
+          </p>
+
+          <div class="mobile-connect-box">
+            <div id="mobile-qr-code" class="qr-container">
+              <!-- Dynamically generated SVG QR code -->
+            </div>
+            <div class="mobile-instructions">
+              <label style="font-size: 11px; text-transform: uppercase; color: var(--text-secondary);">Direct Mobile Link:</label>
+              <div class="url-copy-row">
+                <input type="text" id="input-mobile-url" readonly class="code-input">
+                <button class="btn btn-sm btn-secondary" onclick="copyMobileUrl()">Copy</button>
+              </div>
+              <small style="color: #8b949e; margin-top: 6px; display: block;">Phone must be connected to the same Wi-Fi network.</small>
+            </div>
+          </div>
+
+          <div class="form-group" style="margin-top: 14px;">
+            <label>Camera Label / Location</label>
+            <input type="text" id="mobile-cam-name" placeholder="e.g. Entrance Mobile Cam, Hallway Phone" value="Mobile Phone Camera">
+          </div>
+
+          <button class="btn btn-primary btn-block" style="margin-top: 12px;" onclick="addMobileCameraFeed()">+ Add Mobile Camera to Wall</button>
+        </div>
+
+        <!-- Tab 2: CCTV / IP Camera Stream -->
+        <div id="tab-cctv" class="tab-content">
+          <p style="font-size: 13px; color: var(--text-secondary); margin-bottom: 14px;">
+            Connect RTSP or HTTP MJPEG surveillance cameras (e.g., IP Webcam app, CCTV DVR, Hikvision, Dahua).
+          </p>
+
+          <div class="form-group">
+            <label>Camera Name / Location *</label>
+            <input type="text" id="cctv-name" placeholder="e.g. Gate 1 CCTV, Parking Lot Camera" required>
+          </div>
+
+          <div class="form-group" style="margin-top: 10px;">
+            <label>Stream URL (RTSP or HTTP MJPEG) *</label>
+            <input type="text" id="cctv-url" placeholder="e.g. http://192.168.1.50:8080/video or rtsp://..." required>
+            <small style="color: var(--text-secondary); margin-top: 4px;">Tip: You can use the free Android/iOS app 'IP Webcam' to test with an instant stream URL like <code>http://192.168.x.x:8080/video</code>.</small>
+          </div>
+
+          <button class="btn btn-primary btn-block" style="margin-top: 14px;" onclick="addCctvCameraFeed()">Connect & Add CCTV Feed</button>
+        </div>
+
+        <!-- Tab 3: USB / Built-in Webcam -->
+        <div id="tab-webcam" class="tab-content">
+          <p style="font-size: 13px; color: var(--text-secondary); margin-bottom: 14px;">
+            Add an additional USB webcam or external camera connected to this computer.
+          </p>
+
+          <div class="form-group">
+            <label>Select Connected Camera</label>
+            <select id="select-webcam-device" class="form-select"></select>
+          </div>
+
+          <div class="form-group" style="margin-top: 10px;">
+            <label>Camera Label</label>
+            <input type="text" id="webcam-cam-name" placeholder="e.g. Secondary USB Camera">
+          </div>
+
+          <button class="btn btn-primary btn-block" style="margin-top: 14px;" onclick="addUsbWebcamFeed()">+ Add USB Camera to Wall</button>
+        </div>
       </div>
     </div>
   </div>

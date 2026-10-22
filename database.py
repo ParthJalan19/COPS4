@@ -7,10 +7,7 @@ from dotenv import load_dotenv
 
 load_dotenv(override=True)
 
-MONGODB_URI = os.getenv(
-    "MONGODB_URI",
-    "mongodb+srv://parthjalan18476_db_user:Parth%40!357@cluster0.sqtjclf.mongodb.net/cops_new?retryWrites=true&w=majority"
-)
+MONGODB_URI = os.getenv("MONGODB_URI", "")
 MONGODB_DB_NAME = os.getenv("MONGODB_DB_NAME", "cops_new")
 USE_MOCK_DB = os.getenv("USE_MOCK_DB", "false").lower() in ("true", "1", "yes")
 
@@ -23,16 +20,20 @@ _local_db_file = "cops_new_local.json"
 def _init_local_db():
     if not os.path.exists(_local_db_file):
         with open(_local_db_file, "w", encoding="utf-8") as f:
-            json.dump({"watchlist": [], "alerts": []}, f, indent=2)
+            json.dump({"watchlist": [], "alerts": [], "cameras": []}, f, indent=2)
 
 
 def _load_local_db() -> Dict[str, list]:
     _init_local_db()
     try:
         with open(_local_db_file, "r", encoding="utf-8") as f:
-            return json.load(f)
+            data = json.load(f)
+            data.setdefault("watchlist", [])
+            data.setdefault("alerts", [])
+            data.setdefault("cameras", [])
+            return data
     except Exception:
-        return {"watchlist": [], "alerts": []}
+        return {"watchlist": [], "alerts": [], "cameras": []}
 
 
 def _save_local_db(data: Dict[str, list]):
@@ -66,6 +67,8 @@ def init_db():
         last_err = None
         client = None
         for test_uri in uris_to_try:
+            if not test_uri:
+                continue
             try:
                 print(f"[Database] Connecting to MongoDB Atlas ({MONGODB_DB_NAME})...")
                 c = pymongo.MongoClient(test_uri, serverSelectionTimeoutMS=4000)
@@ -181,8 +184,89 @@ def delete_from_watchlist(item_id: str) -> bool:
     return True
 
 
+# ---------------- CAMERAS TABLE (Surveillance Wall) ----------------
+def save_camera(
+    cam_id: str,
+    name: str,
+    cam_type: str,
+    stream_url: Optional[str] = None,
+    device_id: Optional[str] = None
+) -> Dict[str, Any]:
+    """Persists a camera feed configuration in MongoDB Atlas."""
+    cam_record = {
+        "id": cam_id,
+        "name": name.strip(),
+        "type": cam_type,  # 'webcam', 'mobile', 'cctv_ip'
+        "stream_url": (stream_url or "").strip(),
+        "device_id": (device_id or "").strip(),
+        "created_at": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    }
+
+    if _db is not None:
+        try:
+            doc = cam_record.copy()
+            doc["_id"] = doc["id"]
+            _db.cameras.replace_one({"_id": doc["_id"]}, doc, upsert=True)
+            return cam_record
+        except Exception as e:
+            print(f"[Database] Error saving camera to Atlas: {e}")
+
+    data = _load_local_db()
+    data["cameras"] = [c for c in data.get("cameras", []) if c.get("id") != cam_id]
+    data["cameras"].append(cam_record)
+    _save_local_db(data)
+    return cam_record
+
+
+def get_cameras() -> List[Dict[str, Any]]:
+    """Retrieves all registered cameras for the camera wall."""
+    if _db is not None:
+        try:
+            docs = list(_db.cameras.find())
+            results = []
+            for d in docs:
+                item = {
+                    "id": str(d.get("_id", d.get("id"))),
+                    "name": d.get("name", "Camera"),
+                    "type": d.get("type", "webcam"),
+                    "stream_url": d.get("stream_url", ""),
+                    "device_id": d.get("device_id", ""),
+                    "created_at": d.get("created_at", "")
+                }
+                results.append(item)
+            return results
+        except Exception as e:
+            print(f"[Database] Error reading cameras from Atlas: {e}")
+
+    data = _load_local_db()
+    return data.get("cameras", [])
+
+
+def delete_camera(cam_id: str) -> bool:
+    """Removes a camera from the wall."""
+    if _db is not None:
+        try:
+            _db.cameras.delete_one({"_id": cam_id})
+            return True
+        except Exception as e:
+            print(f"[Database] Error deleting camera from Atlas: {e}")
+
+    data = _load_local_db()
+    data["cameras"] = [c for c in data.get("cameras", []) if c.get("id") != cam_id]
+    _save_local_db(data)
+    return True
+
+
 # ---------------- ALERTS TABLE ----------------
-def generate_alert(player_id: str, player_name: str, info: str, confidence: float, snapshot: str) -> Dict[str, Any]:
+def generate_alert(
+    player_id: str,
+    player_name: str,
+    info: str,
+    confidence: float,
+    snapshot: str,
+    camera_id: str = "cam_main",
+    camera_name: str = "Main Surveillance"
+) -> Dict[str, Any]:
     """Generates and logs an alert when a watched player is detected."""
     alert = {
         "id": str(uuid.uuid4()),
@@ -191,6 +275,8 @@ def generate_alert(player_id: str, player_name: str, info: str, confidence: floa
         "info": info,
         "confidence": round(confidence * 100, 1),
         "snapshot": snapshot,
+        "camera_id": camera_id,
+        "camera_name": camera_name,
         "alert_type": "PLAYER_WATCHLIST_MATCH",
         "timestamp": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     }
@@ -225,6 +311,8 @@ def get_alerts(limit: int = 25) -> List[Dict[str, Any]]:
                     "info": d.get("info", ""),
                     "confidence": d.get("confidence", 0),
                     "snapshot": d.get("snapshot", ""),
+                    "camera_id": d.get("camera_id", "cam_main"),
+                    "camera_name": d.get("camera_name", "Main Camera"),
                     "alert_type": d.get("alert_type", "PLAYER_WATCHLIST_MATCH"),
                     "timestamp": d.get("timestamp", "")
                 }
