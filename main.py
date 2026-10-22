@@ -223,12 +223,20 @@ def mobile_frame_endpoint(req: MobileFrameRequest):
     return result
 
 
+# Standby image buffer for mobile cameras when waiting for phone connection
+_standby_img = np.full((360, 480, 3), (16, 21, 28), dtype=np.uint8)
+cv2.circle(_standby_img, (240, 130), 45, (40, 50, 65), -1)
+cv2.putText(_standby_img, "MOBILE CAMERA STANDBY", (95, 220), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (88, 166, 255), 2)
+cv2.putText(_standby_img, "Waiting for phone stream to connect...", (75, 260), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (139, 148, 158), 1)
+_, _sbuf = cv2.imencode(".jpg", _standby_img, [cv2.IMWRITE_JPEG_QUALITY, 80])
+_STANDBY_BYTES = _sbuf.tobytes()
+
 @app.get("/api/mobile/frame/{camera_id}")
 def get_mobile_frame_preview(camera_id: str):
     """Returns the latest snapshot of a mobile camera for wall rendering."""
     frame = stream_manager.get_latest_frame(camera_id)
     if frame is None:
-        return Response(status_code=404)
+        return Response(content=_STANDBY_BYTES, media_type="image/jpeg", status_code=200)
     _, buf = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 80])
     return Response(content=buf.tobytes(), media_type="image/jpeg")
 

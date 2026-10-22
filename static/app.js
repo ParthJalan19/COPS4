@@ -423,7 +423,7 @@ function createCameraTile(cam) {
     mediaHtml = `<img id="stream-${cam.id}" src="/api/stream/${cam.id}" alt="${cam.name}">`;
   } else if (cam.type === "mobile") {
     mediaHtml = `
-      <img id="mobile-stream-${cam.id}" src="/api/mobile/frame/${cam.id}" alt="${cam.name}" onerror="this.src='/static/placeholder.png'">
+      <img id="mobile-stream-${cam.id}" src="/api/mobile/frame/${cam.id}" alt="${escapeHtml(cam.name)}">
       <div id="mobile-notice-${cam.id}" class="camera-placeholder" style="display: none;">
         <span>📱 Waiting for mobile stream...</span>
       </div>
