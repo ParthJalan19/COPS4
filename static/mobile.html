@@ -360,7 +360,34 @@
       const scaleX = canvas.width / 480;
       const scaleY = canvas.height / (480 * (video.videoHeight / video.videoWidth));
 
-      // 1. Draw Faces
+      // 0. Draw Full Body Humans
+      if (data.bodies && data.bodies.length > 0) {
+        for (const body of data.bodies) {
+          const [bx, by, bw, bh] = body.bbox;
+          const sx = bx * scaleX;
+          const sy = by * scaleY;
+          const sw = bw * scaleX;
+          const sh = bh * scaleY;
+
+          ctx.save();
+          ctx.lineWidth = 3;
+          ctx.strokeStyle = "#388bfd";
+          ctx.fillStyle = "rgba(56, 139, 253, 0.08)";
+          ctx.fillRect(sx, sy, sw, sh);
+          ctx.strokeRect(sx, sy, sw, sh);
+
+          const bLabel = `👤 PERSON (${body.confidence}%)`;
+          ctx.font = "bold 14px Inter, sans-serif";
+          const tagY = sy + sh + 20 < canvas.height ? sy + sh + 4 : (sy > 26 ? sy - 26 : sy);
+          ctx.fillStyle = "#1f6feb";
+          ctx.fillRect(sx, tagY, ctx.measureText(bLabel).width + 14, 22);
+          ctx.fillStyle = "#fff";
+          ctx.fillText(bLabel, sx + 6, tagY + 16);
+          ctx.restore();
+        }
+      }
+
+      // 1. Draw Faces & Cornea/Ocular Biometrics
       if (data.faces && data.faces.length > 0) {
         for (const face of data.faces) {
           const [x, y, w, h] = face.bbox;
@@ -369,16 +396,53 @@
           const sw = w * scaleX;
           const sh = h * scaleY;
 
+          const isMatch = face.is_match;
+          const isMasked = face.is_masked;
+
+          ctx.save();
           ctx.lineWidth = 4;
-          ctx.strokeStyle = face.is_match ? "#ff7b72" : "#e3b341";
+          if (isMatch) {
+            ctx.strokeStyle = "#ff7b72";
+            ctx.fillStyle = "#da3633";
+          } else if (isMasked) {
+            ctx.strokeStyle = "#b388ff";
+            ctx.fillStyle = "#7c4dff";
+          } else {
+            ctx.strokeStyle = "#e3b341";
+            ctx.fillStyle = "#d29922";
+          }
           ctx.strokeRect(sx, sy, sw, sh);
 
-          ctx.fillStyle = face.is_match ? "#da3633" : "#d29922";
-          const label = face.is_match ? `🚨 ${face.name} (${face.confidence}%)` : "Unrecognized";
-          ctx.font = "bold 16px Inter, sans-serif";
-          ctx.fillRect(sx, sy > 30 ? sy - 30 : sy, ctx.measureText(label).width + 16, 28);
+          let label = isMatch
+            ? (isMasked ? `🚨 ${face.name} [😷 MASKED] (${face.confidence}%)` : `🚨 ${face.name} (${face.confidence}%)`)
+            : (isMasked ? `😷 MASK DETECTED (Ocular Active)` : "Unrecognized");
+
+          ctx.font = "bold 15px Inter, sans-serif";
+          ctx.fillRect(sx, sy > 30 ? sy - 30 : sy, ctx.measureText(label).width + 16, 26);
           ctx.fillStyle = "#fff";
-          ctx.fillText(label, sx + 8, sy > 30 ? sy - 10 : sy + 20);
+          ctx.fillText(label, sx + 8, sy > 30 ? sy - 11 : sy + 18);
+
+          // Draw Cornea / Eye Target Reticles
+          if (face.ocular) {
+            const eyes = [face.ocular.right_eye, face.ocular.left_eye];
+            for (const eye of eyes) {
+              const ex = eye[0] * scaleX;
+              const ey = eye[1] * scaleY;
+              const r = Math.max(6, (face.ocular.iod || 30) * scaleX * 0.16);
+
+              ctx.lineWidth = 2;
+              ctx.strokeStyle = isMatch ? "#00e676" : "#00e5ff";
+              ctx.beginPath();
+              ctx.arc(ex, ey, r, 0, 2 * Math.PI);
+              ctx.stroke();
+
+              ctx.fillStyle = isMatch ? "#00e676" : "#00e5ff";
+              ctx.beginPath();
+              ctx.arc(ex, ey, 2.5, 0, 2 * Math.PI);
+              ctx.fill();
+            }
+          }
+          ctx.restore();
 
           if (face.is_match) matched = face;
         }
@@ -418,8 +482,10 @@
         matchTargetInfo.textContent = `Armed Threat: Visual Weapon Detection confirmed (${matchedWeapon.confidence}%)`;
         matchBanner.classList.remove("hidden");
       } else if (matched) {
-        matchTargetName.textContent = matched.name;
-        matchTargetInfo.textContent = `${matched.confidence}% Face Structure Match`;
+        matchTargetName.textContent = matched.is_masked ? `${matched.name} [😷 MASKED SUSPECT]` : matched.name;
+        matchTargetInfo.textContent = matched.is_masked
+          ? `Ocular / Cornea Biometrics Match (${matched.confidence}%) - Face Occluded by Mask`
+          : `${matched.confidence}% Face Structure Match`;
         matchBanner.classList.remove("hidden");
       } else {
         matchBanner.classList.add("hidden");

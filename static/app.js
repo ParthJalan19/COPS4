@@ -356,30 +356,112 @@ function handleDetectionResult(camId, camName, data, capturedDataUrl, overlayEl,
   let identifiedTarget = null;
   let identifiedWeapon = null;
 
-  // 1. Draw Faces (Watchlist Biometrics)
+  // 0. Draw Full Body Humans (Head to Toe)
+  if (data.bodies && data.bodies.length > 0) {
+    for (const body of data.bodies) {
+      const [bx, by, bw, bh] = body.bbox;
+      const boxX = isVideoFeed ? (overlayEl.width - bx - bw) : bx;
+
+      ctx.save();
+      ctx.lineWidth = 2.5;
+      ctx.strokeStyle = "#388bfd";
+      ctx.fillStyle = "rgba(56, 139, 253, 0.08)";
+      ctx.fillRect(boxX, by, bw, bh);
+      ctx.strokeRect(boxX, by, bw, bh);
+
+      // Tactical corner brackets
+      const corner = Math.min(16, bw * 0.2, bh * 0.2);
+      ctx.lineWidth = 3.5;
+      ctx.strokeStyle = "#58a6ff";
+      ctx.beginPath();
+      ctx.moveTo(boxX, by + corner); ctx.lineTo(boxX, by); ctx.lineTo(boxX + corner, by);
+      ctx.moveTo(boxX + bw - corner, by); ctx.lineTo(boxX + bw, by); ctx.lineTo(boxX + bw, by + corner);
+      ctx.moveTo(boxX, by + bh - corner); ctx.lineTo(boxX, by + bh); ctx.lineTo(boxX + corner, by + bh);
+      ctx.moveTo(boxX + bw - corner, by + bh); ctx.lineTo(boxX + bw, by + bh); ctx.lineTo(boxX + bw, by + bh - corner);
+      ctx.stroke();
+
+      const bLabel = `👤 PERSON (${body.confidence}%) - ${body.posture}`;
+      ctx.font = "bold 11px Inter, sans-serif";
+      const tagY = by + bh + 16 < overlayEl.height ? by + bh + 4 : (by > 22 ? by - 22 : by + 2);
+      ctx.fillStyle = "#1f6feb";
+      ctx.fillRect(boxX, tagY, ctx.measureText(bLabel).width + 12, 18);
+      ctx.fillStyle = "#ffffff";
+      ctx.fillText(bLabel, boxX + 6, tagY + 13);
+      ctx.restore();
+    }
+  }
+
+  // 1. Draw Faces & Cornea/Ocular Biometrics
   if (data.faces && data.faces.length > 0) {
     for (const face of data.faces) {
       const [x, y, w, h] = face.bbox;
       const isMatch = face.is_match;
+      const isMasked = face.is_masked;
       const boxX = isVideoFeed ? (overlayEl.width - x - w) : x;
 
       ctx.save();
       ctx.lineWidth = 3;
-      ctx.strokeStyle = isMatch ? "#f85149" : "#d29922";
-      ctx.fillStyle = isMatch ? "#da3633" : "#d29922";
+      if (isMatch) {
+        ctx.strokeStyle = "#f85149";
+        ctx.fillStyle = "#da3633";
+      } else if (isMasked) {
+        ctx.strokeStyle = "#b388ff";
+        ctx.fillStyle = "#7c4dff";
+      } else {
+        ctx.strokeStyle = "#d29922";
+        ctx.fillStyle = "#d29922";
+      }
       ctx.strokeRect(boxX, y, w, h);
 
-      const labelText = isMatch
-        ? `IDENTIFIED: ${face.name} (${face.confidence}%)`
-        : "Unrecognized Person";
+      let labelText = "Unrecognized";
+      if (isMatch) {
+        labelText = isMasked
+          ? `🚨 IDENTIFIED (MASKED): ${face.name} (${face.confidence}%)`
+          : `IDENTIFIED: ${face.name} (${face.confidence}%)`;
+      } else if (isMasked) {
+        labelText = `😷 MASK DETECTED (Ocular Active)`;
+      }
 
-      ctx.font = "bold 13px Inter, sans-serif";
+      ctx.font = "bold 12px Inter, sans-serif";
       const textWidth = ctx.measureText(labelText).width;
-      const tagY = y > 26 ? y - 26 : y;
-      ctx.fillRect(boxX, tagY, textWidth + 16, 24);
-
+      const tagY = y > 24 ? y - 24 : y;
+      ctx.fillRect(boxX, tagY, textWidth + 14, 22);
       ctx.fillStyle = "#ffffff";
-      ctx.fillText(labelText, boxX + 8, tagY + 17);
+      ctx.fillText(labelText, boxX + 6, tagY + 15);
+
+      // Draw Cornea / Retinal Eye Tracking Reticles
+      if (face.ocular) {
+        const eyes = [
+          { name: "R", pt: face.ocular.right_eye },
+          { name: "L", pt: face.ocular.left_eye }
+        ];
+        for (const eye of eyes) {
+          const ex = isVideoFeed ? (overlayEl.width - eye.pt[0]) : eye.pt[0];
+          const ey = eye.pt[1];
+          const r = Math.max(5, (face.ocular.iod || 30) * 0.16);
+
+          // Outer targeting ring
+          ctx.lineWidth = 1.5;
+          ctx.strokeStyle = isMatch ? "#00e676" : "#00e5ff";
+          ctx.beginPath();
+          ctx.arc(ex, ey, r, 0, 2 * Math.PI);
+          ctx.stroke();
+
+          // Cornea center dot
+          ctx.fillStyle = isMatch ? "#00e676" : "#00e5ff";
+          ctx.beginPath();
+          ctx.arc(ex, ey, 2.2, 0, 2 * Math.PI);
+          ctx.fill();
+
+          // Reticle crosshairs
+          ctx.beginPath();
+          ctx.moveTo(ex - r - 2, ey); ctx.lineTo(ex - r + 3, ey);
+          ctx.moveTo(ex + r - 3, ey); ctx.lineTo(ex + r + 2, ey);
+          ctx.moveTo(ex, ey - r - 2); ctx.lineTo(ex, ey - r + 3);
+          ctx.moveTo(ex, ey + r - 3); ctx.lineTo(ex, ey + r + 2);
+          ctx.stroke();
+        }
+      }
       ctx.restore();
 
       if (isMatch) identifiedTarget = face;
@@ -475,16 +557,25 @@ function handleDetectionResult(camId, camName, data, capturedDataUrl, overlayEl,
     // Show Popup Modal with Camera Source
     modalLiveImg.src = identifiedTarget.snapshot || capturedDataUrl;
     modalRegisteredImg.src = identifiedTarget.registered_image || "/static/placeholder.png";
-    modalPersonName.textContent = identifiedTarget.name;
+    const isMaskedTarget = identifiedTarget.is_masked;
+    modalPersonName.textContent = isMaskedTarget ? `${identifiedTarget.name} [😷 MASKED]` : identifiedTarget.name;
     modalCameraName.textContent = camName;
-    modalConfidence.textContent = `${identifiedTarget.confidence}% Facial Similarity`;
-    modalDetails.textContent = identifiedTarget.info || identifiedTarget.details || "Watchlist Target";
+    modalConfidence.textContent = isMaskedTarget
+      ? `${identifiedTarget.confidence}% Ocular / Cornea Match`
+      : `${identifiedTarget.confidence}% Facial Similarity`;
+    modalDetails.textContent = isMaskedTarget
+      ? `👁️ Periocular Biometrics Match: Suspect identified while wearing facial covering/mask.`
+      : (identifiedTarget.info || identifiedTarget.details || "Watchlist Target");
     alertModal.classList.remove("hidden");
 
     // Update bottom match alert box
-    matchName.textContent = identifiedTarget.name;
+    matchName.innerHTML = isMaskedTarget
+      ? `<span style="color: #ff7b72;">🚨 ${identifiedTarget.name} [😷 MASKED SUSPECT]</span>`
+      : identifiedTarget.name;
     matchCamName.textContent = camName;
-    matchInfo.textContent = identifiedTarget.info || "Similar Face Structure Matched";
+    matchInfo.textContent = isMaskedTarget
+      ? `Cornea & Ocular Biometric Match (${identifiedTarget.confidence}%) - Face Occlusion / Mask Detected`
+      : (identifiedTarget.info || "Similar Face Structure Matched");
     matchConfidence.textContent = identifiedTarget.confidence + "%";
     matchAlertBox.classList.remove("hidden");
 

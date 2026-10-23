@@ -15,6 +15,7 @@ from typing import Optional, List
 import database
 from face_engine import FaceEngine
 from weapon_detector import weapon_detector
+from body_detector import BodyDetector
 from ip_camera import stream_manager
 
 app = FastAPI(title="COPS Camera Wall & Face Recognition System", version="3.0.0")
@@ -32,6 +33,7 @@ app.add_middleware(
 )
 
 face_engine = FaceEngine()
+body_detector = BodyDetector()
 
 # Throttle alerts per player/camera and weapon/camera
 _last_alert_times = {}
@@ -105,8 +107,9 @@ def get_status():
         "camera_count": len(cameras),
         "network_ip": get_local_ip(),
         "models_loaded": {
-            "face_detector": "OpenCV YuNet ONNX (face_detection_yunet)",
-            "face_recognizer": "OpenCV SFace ONNX (face_recognition_sface)",
+            "face_detector": "OpenCV YuNet ONNX (0.35 threshold, 5-pt Ocular/Cornea Landmarks)",
+            "face_recognizer": "OpenCV SFace ONNX (Periocular Biometrics & Mask-Aware Matching)",
+            "body_detector": "YOLOv8n Full Body Human Detector (person_detection_yolov8)",
             "weapon_detector": "Dual-Model YOLOv8 Ensemble (Letterbox Preprocessed, Guns, Pistols, Knives, Blades)",
             "motion_detector": "Frame Differencing & Contour Area"
         }
@@ -192,6 +195,11 @@ def mobile_frame_endpoint(req: MobileFrameRequest):
         force_recognition=req.force_recognition
     )
 
+    # Process full-body human detection (head to toe)
+    bodies = body_detector.detect_bodies(frame, conf_thresh=0.35)
+    result["bodies"] = bodies
+    result["has_body"] = len(bodies) > 0
+
     # Process weapon scanning (knives, guns/pistols)
     weapons = weapon_detector.detect_weapons(frame, custom_conf=req.weapon_threshold)
     result["weapons"] = weapons
@@ -227,7 +235,7 @@ def mobile_frame_endpoint(req: MobileFrameRequest):
             )
             generated_alerts.append(w_alert)
 
-    # Process watchlist target alerts
+    # Process watchlist target alerts (including masked suspects matched by ocular biometrics)
     for face in result.get("faces", []):
         if face.get("is_match") and face.get("person_id"):
             pid = face["person_id"]
@@ -245,10 +253,14 @@ def mobile_frame_endpoint(req: MobileFrameRequest):
                     _, buf = cv2.imencode(".jpg", crop, [cv2.IMWRITE_JPEG_QUALITY, 85])
                     snap_b64 = "data:image/jpeg;base64," + base64.b64encode(buf.tobytes()).decode("utf-8")
 
+                is_masked = face.get("is_masked", False)
+                p_name = f"{face['name']} [😷 MASKED SUSPECT]" if is_masked else face["name"]
+                info_text = f"👁️ Ocular / Cornea Match ({face['confidence']}%) - Mask Detected" if is_masked else (face.get("info", "") or "Facial Recognition Match")
+
                 alert_record = database.generate_alert(
                     player_id=pid,
-                    player_name=face["name"],
-                    info=face.get("info", ""),
+                    player_name=p_name,
+                    info=info_text,
                     confidence=face["confidence"] / 100.0,
                     snapshot=snap_b64,
                     camera_id=req.camera_id,
@@ -385,6 +397,11 @@ def detect_endpoint(req: DetectRequest):
         force_recognition=req.force_recognition
     )
 
+    # Process full-body human detection (head to toe)
+    bodies = body_detector.detect_bodies(frame, conf_thresh=0.35)
+    result["bodies"] = bodies
+    result["has_body"] = len(bodies) > 0
+
     # Process weapon scanning (knives, guns/pistols)
     weapons = weapon_detector.detect_weapons(frame, custom_conf=req.weapon_threshold)
     result["weapons"] = weapons
@@ -420,7 +437,7 @@ def detect_endpoint(req: DetectRequest):
             )
             generated_alerts.append(w_alert)
 
-    # Process watchlist target alerts
+    # Process watchlist target alerts (including masked suspects matched by ocular biometrics)
     for face in result.get("faces", []):
         if face.get("is_match") and face.get("person_id"):
             pid = face["person_id"]
@@ -447,10 +464,14 @@ def detect_endpoint(req: DetectRequest):
             last_alert = _last_alert_times.get(key, 0)
             if now - last_alert > 3.0:
                 _last_alert_times[key] = now
+                is_masked = face.get("is_masked", False)
+                p_name = f"{face['name']} [😷 MASKED SUSPECT]" if is_masked else face["name"]
+                info_text = f"👁️ Ocular / Cornea Match ({face['confidence']}%) - Mask Detected" if is_masked else (face.get("info", face.get("details", "")) or "Facial Recognition Match")
+
                 alert_record = database.generate_alert(
                     player_id=pid,
-                    player_name=face["name"],
-                    info=face.get("info", face.get("details", "")),
+                    player_name=p_name,
+                    info=info_text,
                     confidence=face["confidence"] / 100.0,
                     snapshot=snap_b64,
                     camera_id=req.camera_id or "cam_main",
