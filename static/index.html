@@ -46,11 +46,22 @@
           <h2>Surveillance Camera Wall</h2>
           <span class="cam-count-badge" id="active-cams-count">1 Active Feed</span>
         </div>
-        <div class="grid-controls">
-          <span class="ctrl-label">Grid Layout:</span>
-          <button class="btn btn-sm btn-outline grid-btn" data-grid="1x1">1x1 Focus</button>
-          <button class="btn btn-sm btn-outline grid-btn active" data-grid="2x2">2x2 Grid</button>
-          <button class="btn btn-sm btn-outline grid-btn" data-grid="3x3">3x3 Grid</button>
+        <div style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap;">
+          <div class="grid-controls">
+            <span class="ctrl-label">Grid:</span>
+            <button class="btn btn-sm btn-outline grid-btn" data-grid="1x1">1x1</button>
+            <button class="btn btn-sm btn-outline grid-btn active" data-grid="2x2">2x2</button>
+            <button class="btn btn-sm btn-outline grid-btn" data-grid="3x3">3x3</button>
+          </div>
+          <div style="display: flex; align-items: center; gap: 6px;">
+            <label for="select-weapon-sensitivity" class="ctrl-label" title="Detection sensitivity threshold">🛡️ Sensitivity:</label>
+            <select id="select-weapon-sensitivity" class="form-select-sm" style="background: #161b22; color: #58a6ff; border: 1px solid #30363d; border-radius: 4px; padding: 3px 6px; font-size: 11px;">
+              <option value="0.22">High (22%)</option>
+              <option value="0.28" selected>Balanced (28%)</option>
+              <option value="0.38">Strict (38%)</option>
+            </select>
+            <button id="btn-open-weapon-test" class="btn btn-sm btn-secondary" style="font-size: 11px; padding: 4px 8px;">🔍 Test Weapons</button>
+          </div>
         </div>
       </div>
 
@@ -344,6 +355,63 @@
 
           <button class="btn btn-primary btn-block" style="margin-top: 14px;" onclick="addUsbWebcamFeed()">+ Add USB Camera to Wall</button>
         </div>
+      </div>
+    </div>
+  <!-- Real Weapon Image Testing Modal -->
+  <div id="weapon-test-modal" class="modal-backdrop hidden">
+    <div class="modal-card" style="max-width: 640px;">
+      <div class="modal-header">
+        <div class="modal-title-row">
+          <span class="modal-alert-icon">🛡️</span>
+          <div>
+            <h3>AI Weapon Detection Verification</h3>
+            <p class="modal-subtitle">Real-World Threat Verification (Guns, Pistols, Knives, Blades)</p>
+          </div>
+        </div>
+        <button id="btn-close-weapon-test" class="modal-close-btn">&times;</button>
+      </div>
+
+      <div class="modal-body">
+        <p style="font-size: 13px; color: var(--text-secondary); margin-bottom: 12px;">
+          Click any real-life weapon photo from the dataset or upload your own to test AI scanning:
+        </p>
+
+        <!-- Pre-loaded Real Weapon Samples -->
+        <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin-bottom: 14px;">
+          <button type="button" class="btn-sample-weapon" onclick="testSampleWeapon('/static/samples/pistol_sample_1.jpg')">
+            <img src="/static/samples/pistol_sample_1.jpg" alt="Pistol 1" style="width: 100%; aspect-ratio: 1; object-fit: cover; border-radius: 4px;">
+            <span style="font-size: 11px; display: block; margin-top: 4px; color: #fff;">🔫 Pistols</span>
+          </button>
+          <button type="button" class="btn-sample-weapon" onclick="testSampleWeapon('/static/samples/pistol_sample_2.jpg')">
+            <img src="/static/samples/pistol_sample_2.jpg" alt="Pistol 2" style="width: 100%; aspect-ratio: 1; object-fit: cover; border-radius: 4px;">
+            <span style="font-size: 11px; display: block; margin-top: 4px; color: #fff;">🔫 Handgun</span>
+          </button>
+          <button type="button" class="btn-sample-weapon" onclick="testSampleWeapon('/static/samples/knife_sample_1.jpg')">
+            <img src="/static/samples/knife_sample_1.jpg" alt="Knife 1" style="width: 100%; aspect-ratio: 1; object-fit: cover; border-radius: 4px;">
+            <span style="font-size: 11px; display: block; margin-top: 4px; color: #fff;">🔪 Hunting Knife</span>
+          </button>
+          <button type="button" class="btn-sample-weapon" onclick="testSampleWeapon('/static/samples/knife_sample_2.jpg')">
+            <img src="/static/samples/knife_sample_2.jpg" alt="Knife 2" style="width: 100%; aspect-ratio: 1; object-fit: cover; border-radius: 4px;">
+            <span style="font-size: 11px; display: block; margin-top: 4px; color: #fff;">🔪 Combat Knife</span>
+          </button>
+        </div>
+
+        <!-- Custom Upload Option -->
+        <div class="form-group" style="margin-bottom: 14px;">
+          <label style="font-size: 12px; font-weight: 600; color: #c9d1d9;">Or Upload Any Real Weapon Image:</label>
+          <input type="file" id="input-test-weapon-file" accept="image/*" style="font-size: 12px; margin-top: 4px;">
+        </div>
+
+        <!-- Result Canvas Display -->
+        <div id="weapon-test-result-wrapper" style="position: relative; background: #010409; border: 1px solid #30363d; border-radius: 6px; overflow: hidden; min-height: 220px; display: flex; justify-content: center; align-items: center;">
+          <img id="weapon-test-img" style="max-width: 100%; max-height: 360px; object-fit: contain; display: none;" alt="Weapon Test">
+          <canvas id="weapon-test-canvas" style="position: absolute; inset: 0; pointer-events: none; width: 100%; height: 100%;"></canvas>
+          <div id="weapon-test-placeholder" style="color: var(--text-secondary); font-size: 13px;">
+            Select a sample above or upload an image to run AI detection
+          </div>
+        </div>
+
+        <div id="weapon-test-summary" style="margin-top: 12px; font-size: 13px; font-weight: 600; color: #fff;"></div>
       </div>
     </div>
   </div>

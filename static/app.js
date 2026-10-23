@@ -4,6 +4,7 @@ let currentFocusCam = null;
 let currentGridLayout = "2x2";
 let networkIp = "127.0.0.1";
 let serverPort = 8000;
+let currentWeaponThreshold = 0.28;
 
 // DOM Elements
 const cameraWallGrid = document.getElementById("camera-wall-grid");
@@ -274,7 +275,8 @@ function startWebcamLoop(camId, camName, videoEl, overlayEl) {
           image: dataUrl,
           camera_id: camId,
           camera_name: camName,
-          force_recognition: false
+          force_recognition: false,
+          weapon_threshold: currentWeaponThreshold
         })
       });
 
@@ -612,7 +614,8 @@ function startCctvTileWatcher(camId, camName) {
               image: dataUrl,
               camera_id: camId,
               camera_name: camName,
-              force_recognition: false
+              force_recognition: false,
+              weapon_threshold: currentWeaponThreshold
             })
           });
           if (detRes.ok) {
@@ -899,7 +902,137 @@ function escapeHtml(str) {
   return String(str).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#039;");
 }
 
-function setupEventListeners() {}
+// ---------------- WEAPON SENSITIVITY & VERIFICATION TEST MODAL ----------------
+const selectWeaponSensitivity = document.getElementById("select-weapon-sensitivity");
+const weaponTestModal = document.getElementById("weapon-test-modal");
+const btnOpenWeaponTest = document.getElementById("btn-open-weapon-test");
+const btnCloseWeaponTest = document.getElementById("btn-close-weapon-test");
+const inputTestWeaponFile = document.getElementById("input-test-weapon-file");
+const weaponTestImg = document.getElementById("weapon-test-img");
+const weaponTestCanvas = document.getElementById("weapon-test-canvas");
+const weaponTestPlaceholder = document.getElementById("weapon-test-placeholder");
+const weaponTestSummary = document.getElementById("weapon-test-summary");
+
+if (selectWeaponSensitivity) {
+  selectWeaponSensitivity.addEventListener("change", (e) => {
+    currentWeaponThreshold = parseFloat(e.target.value) || 0.28;
+    console.log("Weapon detection threshold updated to:", currentWeaponThreshold);
+  });
+}
+
+if (btnOpenWeaponTest) {
+  btnOpenWeaponTest.addEventListener("click", () => {
+    weaponTestModal.classList.remove("hidden");
+  });
+}
+
+if (btnCloseWeaponTest) {
+  btnCloseWeaponTest.addEventListener("click", () => {
+    weaponTestModal.classList.add("hidden");
+  });
+}
+
+window.testSampleWeapon = async function(sampleUrl) {
+  weaponTestPlaceholder.textContent = "Loading real weapon sample & running AI detection...";
+  weaponTestPlaceholder.style.display = "block";
+  weaponTestImg.style.display = "none";
+  weaponTestSummary.textContent = "";
+
+  try {
+    const res = await fetch(sampleUrl);
+    const blob = await res.blob();
+    const reader = new FileReader();
+    reader.onload = async (e) => {
+      const dataUrl = e.target.result;
+      await runWeaponVerification(dataUrl);
+    };
+    reader.readAsDataURL(blob);
+  } catch (err) {
+    weaponTestSummary.textContent = "Error loading sample: " + err.message;
+  }
+};
+
+if (inputTestWeaponFile) {
+  inputTestWeaponFile.addEventListener("change", (e) => {
+    const file = e.target.files[0];
+    if (file) {
+      const reader = new FileReader();
+      reader.onload = async (ev) => {
+        await runWeaponVerification(ev.target.result);
+      };
+      reader.readAsDataURL(file);
+    }
+  });
+}
+
+async function runWeaponVerification(dataUrl) {
+  weaponTestPlaceholder.textContent = "Running Dual-Model YOLOv8 Threat Ensemble...";
+  weaponTestPlaceholder.style.display = "block";
+  weaponTestImg.style.display = "none";
+
+  try {
+    const res = await fetch("/api/detect", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        image: dataUrl,
+        camera_id: "test_verification",
+        camera_name: "Real Weapon Image Test",
+        force_recognition: false,
+        weapon_threshold: currentWeaponThreshold
+      })
+    });
+
+    const data = await res.json();
+    weaponTestPlaceholder.style.display = "none";
+    weaponTestImg.src = dataUrl;
+    weaponTestImg.style.display = "block";
+
+    weaponTestImg.onload = () => {
+      weaponTestCanvas.width = weaponTestImg.clientWidth || 400;
+      weaponTestCanvas.height = weaponTestImg.clientHeight || 300;
+      const ctx = weaponTestCanvas.getContext("2d");
+      ctx.clearRect(0, 0, weaponTestCanvas.width, weaponTestCanvas.height);
+
+      const scaleX = weaponTestCanvas.width / weaponTestImg.naturalWidth;
+      const scaleY = weaponTestCanvas.height / weaponTestImg.naturalHeight;
+
+      if (data.weapons && data.weapons.length > 0) {
+        for (const w of data.weapons) {
+          const [bx, by, bw, bh] = w.bbox;
+          const sx = bx * scaleX;
+          const sy = by * scaleY;
+          const sw = bw * scaleX;
+          const sh = bh * scaleY;
+
+          ctx.save();
+          ctx.shadowColor = "#ff0055";
+          ctx.shadowBlur = 10;
+          ctx.lineWidth = 3.5;
+          ctx.strokeStyle = "#ff1744";
+          ctx.strokeRect(sx, sy, sw, sh);
+
+          const icon = w.class === "knife" ? "🔪" : "🔫";
+          const tag = `${icon} ${w.label.toUpperCase()} (${w.confidence}%)`;
+          ctx.fillStyle = "#d50000";
+          ctx.font = "bold 13px Inter, sans-serif";
+          ctx.fillRect(sx, sy > 26 ? sy - 26 : sy, ctx.measureText(tag).width + 16, 24);
+          ctx.fillStyle = "#fff";
+          ctx.fillText(tag, sx + 8, sy > 26 ? sy - 9 : sy + 17);
+          ctx.restore();
+        }
+
+        const weaponSummaryText = data.weapons.map(w => `${w.label} (${w.confidence}%)`).join(", ");
+        weaponTestSummary.innerHTML = `<span style="color: #ff1744;">🚨 DETECTED: ${weaponSummaryText}</span> (Logged in Atlas alerts)`;
+        loadAlerts();
+      } else {
+        weaponTestSummary.innerHTML = `<span style="color: #e3b341;">ℹ️ No weapon detected above ${Math.round(currentWeaponThreshold * 100)}% threshold. Try switching Sensitivity to High (22%).</span>`;
+      }
+    };
+  } catch (err) {
+    weaponTestSummary.textContent = "Test error: " + err.message;
+  }
+}
 
 // Boot app
 initApp();

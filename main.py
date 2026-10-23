@@ -46,6 +46,7 @@ class DetectRequest(BaseModel):
     force_recognition: bool = False
     camera_id: Optional[str] = "cam_main"
     camera_name: Optional[str] = "Main Camera"
+    weapon_threshold: Optional[float] = 0.28
 
 
 class MobileFrameRequest(BaseModel):
@@ -53,6 +54,7 @@ class MobileFrameRequest(BaseModel):
     camera_name: Optional[str] = "Mobile Phone Camera"
     image: str
     force_recognition: bool = True
+    weapon_threshold: Optional[float] = 0.28
 
 
 class CameraConfigRequest(BaseModel):
@@ -105,7 +107,7 @@ def get_status():
         "models_loaded": {
             "face_detector": "OpenCV YuNet ONNX (face_detection_yunet)",
             "face_recognizer": "OpenCV SFace ONNX (face_recognition_sface)",
-            "weapon_detector": "YOLOv8 ONNX (pistol, knife, firearms, blades)",
+            "weapon_detector": "Dual-Model YOLOv8 Ensemble (Letterbox Preprocessed, Guns, Pistols, Knives, Blades)",
             "motion_detector": "Frame Differencing & Contour Area"
         }
     }
@@ -191,7 +193,7 @@ def mobile_frame_endpoint(req: MobileFrameRequest):
     )
 
     # Process weapon scanning (knives, guns/pistols)
-    weapons = weapon_detector.detect_weapons(frame)
+    weapons = weapon_detector.detect_weapons(frame, custom_conf=req.weapon_threshold)
     result["weapons"] = weapons
     result["has_weapon"] = len(weapons) > 0
 
@@ -384,7 +386,7 @@ def detect_endpoint(req: DetectRequest):
     )
 
     # Process weapon scanning (knives, guns/pistols)
-    weapons = weapon_detector.detect_weapons(frame)
+    weapons = weapon_detector.detect_weapons(frame, custom_conf=req.weapon_threshold)
     result["weapons"] = weapons
     result["has_weapon"] = len(weapons) > 0
 
