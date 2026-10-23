@@ -75,6 +75,10 @@ const btnRefreshAlerts = document.getElementById("btn-refresh-alerts");
 const btnClearLogs = document.getElementById("btn-clear-logs");
 
 // ---------------- INITIALIZATION ----------------
+function setupEventListeners() {
+  // Global event listeners hook
+}
+
 async function initApp() {
   await fetchNetworkInfo();
   await checkStatus();
@@ -284,7 +288,7 @@ function startWebcamLoop(camId, camName, videoEl, overlayEl) {
           image: dataUrl,
           camera_id: camId,
           camera_name: camName,
-          force_recognition: false,
+          force_recognition: true,
           weapon_threshold: currentWeaponThreshold
         })
       });
@@ -656,7 +660,7 @@ function startCctvTileWatcher(camId, camName) {
               image: dataUrl,
               camera_id: camId,
               camera_name: camName,
-              force_recognition: false,
+              force_recognition: true,
               weapon_threshold: currentWeaponThreshold
             })
           });
