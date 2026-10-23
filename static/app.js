@@ -4,7 +4,7 @@ let currentFocusCam = null;
 let currentGridLayout = "2x2";
 let networkIp = "127.0.0.1";
 let serverPort = 8000;
-let currentWeaponThreshold = 0.28;
+let currentWeaponThreshold = 0.18;
 
 // DOM Elements
 const cameraWallGrid = document.getElementById("camera-wall-grid");
@@ -33,6 +33,15 @@ const modalPersonName = document.getElementById("modal-person-name");
 const modalCameraName = document.getElementById("modal-camera-name");
 const modalConfidence = document.getElementById("modal-confidence");
 const modalDetails = document.getElementById("modal-details");
+
+// Weapon Alert Modal
+const weaponAlertModal = document.getElementById("weapon-alert-modal");
+const modalWeaponImg = document.getElementById("modal-weapon-img");
+const modalWeaponType = document.getElementById("modal-weapon-type");
+const modalWeaponConfidence = document.getElementById("modal-weapon-confidence");
+const modalWeaponCam = document.getElementById("modal-weapon-cam");
+const btnCloseWeaponModal = document.getElementById("btn-close-weapon-modal");
+const btnResumeWeapon = document.getElementById("btn-resume-weapon");
 
 const addCameraModal = document.getElementById("add-camera-modal");
 const btnOpenAddCamera = document.getElementById("btn-open-add-camera");
@@ -425,6 +434,23 @@ function handleDetectionResult(camId, camName, data, capturedDataUrl, overlayEl,
   if (identifiedWeapon) {
     playThreatTone();
     const icon = identifiedWeapon.class === "knife" ? "🔪" : "🔫";
+
+    // Pause this camera feed so the threat is held on screen
+    tile.dataset.paused = "true";
+    if (holdBanner) {
+      holdBanner.innerHTML = `<span>🚨 ARMED THREAT: ${icon} ${identifiedWeapon.label.toUpperCase()}</span>`;
+      holdBanner.classList.remove("hidden");
+    }
+    if (btnResume) btnResume.classList.remove("hidden");
+
+    // Open the Critical Weapon Alert Modal
+    if (modalWeaponImg) modalWeaponImg.src = capturedDataUrl;
+    if (modalWeaponType) modalWeaponType.textContent = `${icon} ${identifiedWeapon.label.toUpperCase()}`;
+    if (modalWeaponConfidence) modalWeaponConfidence.textContent = `${identifiedWeapon.confidence}% Visual Match`;
+    if (modalWeaponCam) modalWeaponCam.textContent = camName;
+    if (weaponAlertModal) weaponAlertModal.classList.remove("hidden");
+
+    // Update bottom match alert box
     matchName.innerHTML = `<span style="color: #ff1744; font-weight: 800;">${icon} CRITICAL WEAPON DETECTED: ${identifiedWeapon.label.toUpperCase()}</span>`;
     matchCamName.textContent = camName;
     matchInfo.textContent = `Armed Threat: Visual Weapon Detection confirmed at ${identifiedWeapon.confidence}% confidence`;
@@ -491,6 +517,22 @@ btnModalResume.addEventListener("click", () => {
 btnModalClose.addEventListener("click", () => {
   alertModal.classList.add("hidden");
 });
+
+if (btnResumeWeapon) {
+  btnResumeWeapon.addEventListener("click", () => {
+    weaponAlertModal.classList.add("hidden");
+    document.querySelectorAll(".camera-tile").forEach(t => {
+      resumeCameraScan(t.dataset.camId);
+    });
+    matchAlertBox.classList.add("hidden");
+  });
+}
+
+if (btnCloseWeaponModal) {
+  btnCloseWeaponModal.addEventListener("click", () => {
+    weaponAlertModal.classList.add("hidden");
+  });
+}
 
 // ---------------- ADD NEW CAMERA TILE (DYNAMIC) ----------------
 

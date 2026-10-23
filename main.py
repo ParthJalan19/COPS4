@@ -46,7 +46,7 @@ class DetectRequest(BaseModel):
     force_recognition: bool = False
     camera_id: Optional[str] = "cam_main"
     camera_name: Optional[str] = "Main Camera"
-    weapon_threshold: Optional[float] = 0.28
+    weapon_threshold: Optional[float] = 0.20
 
 
 class MobileFrameRequest(BaseModel):
@@ -54,7 +54,7 @@ class MobileFrameRequest(BaseModel):
     camera_name: Optional[str] = "Mobile Phone Camera"
     image: str
     force_recognition: bool = True
-    weapon_threshold: Optional[float] = 0.28
+    weapon_threshold: Optional[float] = 0.20
 
 
 class CameraConfigRequest(BaseModel):

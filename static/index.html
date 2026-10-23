@@ -56,9 +56,10 @@
           <div style="display: flex; align-items: center; gap: 6px;">
             <label for="select-weapon-sensitivity" class="ctrl-label" title="Detection sensitivity threshold">🛡️ Sensitivity:</label>
             <select id="select-weapon-sensitivity" class="form-select-sm" style="background: #161b22; color: #58a6ff; border: 1px solid #30363d; border-radius: 4px; padding: 3px 6px; font-size: 11px;">
-              <option value="0.22">High (22%)</option>
-              <option value="0.28" selected>Balanced (28%)</option>
-              <option value="0.38">Strict (38%)</option>
+              <option value="0.18" selected>Ultra High (18% - Webcam/Phone)</option>
+              <option value="0.25">High (25% - Recommended)</option>
+              <option value="0.35">Balanced (35%)</option>
+              <option value="0.45">Strict (45%)</option>
             </select>
             <button id="btn-open-weapon-test" class="btn btn-sm btn-secondary" style="font-size: 11px; padding: 4px 8px;">🔍 Test Weapons</button>
           </div>
@@ -210,6 +211,51 @@
       </table>
     </div>
   </section>
+
+  <!-- Emergency Armed Threat Detected Modal -->
+  <div id="weapon-alert-modal" class="modal-backdrop hidden">
+    <div class="modal-card modal-threat-card" style="max-width: 500px; border: 2px solid #ff1744; box-shadow: 0 0 30px rgba(255, 23, 68, 0.4);">
+      <div class="modal-header" style="background: rgba(255, 23, 68, 0.15); border-bottom: 1px solid rgba(255, 23, 68, 0.3);">
+        <div class="modal-title-row">
+          <span class="modal-alert-icon" style="animation: pulse-weapon 0.8s infinite alternate;">🚨</span>
+          <div>
+            <h3 style="color: #ff1744;">CRITICAL ARMED THREAT DETECTED</h3>
+            <p class="modal-subtitle" style="color: #ff80ab;">Visual Weapon Recognition Triggered</p>
+          </div>
+        </div>
+        <button id="btn-close-weapon-modal" class="modal-close-btn">&times;</button>
+      </div>
+
+      <div class="modal-body">
+        <div style="text-align: center; margin-bottom: 14px;">
+          <img id="modal-weapon-img" style="max-width: 100%; max-height: 220px; border-radius: 6px; border: 2px solid #ff1744; object-fit: contain; background: #000;" alt="Weapon Threat Snapshot">
+        </div>
+
+        <div class="modal-info-box" style="border-color: rgba(255, 23, 68, 0.4);">
+          <div class="info-row">
+            <span class="info-label">Weapon Classification:</span>
+            <span id="modal-weapon-type" class="info-val strong" style="color: #ff1744;">--</span>
+          </div>
+          <div class="info-row">
+            <span class="info-label">Detection Confidence:</span>
+            <span id="modal-weapon-confidence" class="badge-weapon-alert">--</span>
+          </div>
+          <div class="info-row">
+            <span class="info-label">Camera Location:</span>
+            <span id="modal-weapon-cam" class="info-val strong" style="color: #58a6ff;">--</span>
+          </div>
+          <div class="info-row">
+            <span class="info-label">Security Protocol:</span>
+            <span class="status-paused-tag" style="background: rgba(255, 23, 68, 0.2); color: #ff1744; border-color: #ff1744;">⚠️ ARMED THREAT CONFIRMED</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="modal-footer" style="display: flex; gap: 10px;">
+        <button id="btn-resume-weapon" class="btn btn-primary btn-block" style="background: #d50000; border-color: #ff1744;">Acknowledge &amp; Resume Surveillance</button>
+      </div>
+    </div>
+  </div>
 
   <!-- Visual Popup Alert Modal (No Noise, Clean Popup Alert) -->
   <div id="alert-modal" class="modal-backdrop hidden">
