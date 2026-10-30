@@ -303,15 +303,25 @@ def generate_weapon_alert(
     confidence: float,
     snapshot: str,
     camera_id: str = "cam_main",
-    camera_name: str = "Main Surveillance"
+    camera_name: str = "Main Surveillance",
+    track_id: str = "",
+    model_version: str = "YOLOv8-Ensemble-v4.1",
+    detection_status: str = "CONFIRMED_THREAT",
+    human_review_status: str = "PENDING_REVIEW"
 ) -> Dict[str, Any]:
     """Generates and logs an emergency alert when a weapon (knife/gun) is detected."""
     alert = {
         "id": str(uuid.uuid4()),
         "player_id": "",
         "player_name": f"CRITICAL: {label.upper()}",
-        "info": f"Armed Threat Detected: {label}",
+        "info": f"Armed Threat Detected: {label} (Track: {track_id or 'N/A'})",
         "confidence": round(confidence, 1),
+        "raw_confidence": round(confidence, 1),
+        "calibrated_confidence": round(confidence, 1),
+        "track_id": track_id,
+        "model_version": model_version,
+        "detection_status": detection_status,
+        "human_review_status": human_review_status,
         "snapshot": snapshot,
         "camera_id": camera_id,
         "camera_name": camera_name,

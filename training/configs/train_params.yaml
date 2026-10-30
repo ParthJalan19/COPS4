@@ -1,0 +1,39 @@
+# COPS-4 YOLOv8 Custom Training Hyperparameters
+# Optimized for real-world surveillance threat detection & CPU-efficient export
+
+# Architecture
+model: yolov8n.pt       # Lightweight base model (3.2M params) ideal for CPU inference
+imgsz: 640              # Standard surveillance input resolution
+epochs: 60              # Training epochs
+batch: 16               # Batch size (8 for 4GB VRAM, 16 for 8GB+, 4 for CPU)
+device: 0               # Device: 0 for GPU, 'cpu' for CPU training
+workers: 4              # DataLoader workers
+
+# Optimization
+optimizer: AdamW
+lr0: 0.001              # Initial learning rate
+lrf: 0.01               # Final learning rate factor (lr0 * lrf)
+momentum: 0.937
+weight_decay: 0.0005
+warmup_epochs: 3.0
+warmup_momentum: 0.8
+patience: 15            # Early stopping patience if mAP doesn't improve
+
+# Augmentation (Critical for real-world surveillance variance)
+mosaic: 1.0             # Mosaic augmentation (combines 4 scenes)
+mixup: 0.15             # Blends two scenes for overlapping occlusion robustness
+hsv_h: 0.015            # Image HSV-Hue augmentation
+hsv_s: 0.7              # Image HSV-Saturation augmentation
+hsv_v: 0.4              # Image HSV-Value augmentation (lighting variation)
+degrees: 10.0           # Image rotation (+/- deg)
+translate: 0.1          # Image translation (+/- fraction)
+scale: 0.5              # Image scale (+/- gain)
+fliplr: 0.5             # Horizontal flip probability (left/right hand holding)
+flipud: 0.0             # No vertical flips (weapons are not held upside down normally)
+close_mosaic: 10        # Disable mosaic augmentation for final 10 epochs for sharp edge alignment
+
+# Saving & Logging
+save: true
+save_period: 10
+plots: true
+exist_ok: true

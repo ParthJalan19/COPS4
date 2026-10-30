@@ -1,0 +1,11 @@
+# Training directory gitignore
+# Exclude training datasets, runs, caches, and weight checkpoints from Git tracking
+datasets/
+runs/
+*.pt
+*.onnx
+*.zip
+*.tar.gz
+__pycache__/
+*.pyc
+

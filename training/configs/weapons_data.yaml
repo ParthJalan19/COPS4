@@ -1,0 +1,21 @@
+# COPS-4 Weapon Detection Dataset Configuration
+# Standard YOLO dataset definition for threat surveillance
+
+path: d:/College major project/cops v4/training/datasets/cops_weapons
+train: train/images
+val: val/images
+test: test/images # Optional
+
+# Class count & names
+nc: 4
+names:
+  0: pistol
+  1: knife
+  2: rifle
+  3: grenade
+
+# Category aliases for HUD & alert logging
+metadata:
+  version: "4.1.0"
+  description: "COPS-4 Surveillance Threat Detection Dataset"
+  author: "COPS AI Core"

@@ -200,20 +200,31 @@ def mobile_frame_endpoint(req: MobileFrameRequest):
     result["bodies"] = bodies
     result["has_body"] = len(bodies) > 0
 
-    # Process weapon scanning (knives, guns/pistols)
-    weapons = weapon_detector.detect_weapons(frame, custom_conf=req.weapon_threshold)
+    # Process weapon scanning (knives, guns/pistols) with actor presence gating
+    weapons = weapon_detector.detect_weapons(
+        frame,
+        custom_conf=req.weapon_threshold,
+        camera_id=req.camera_id,
+        has_actor=len(bodies) > 0 or len(result.get("faces", [])) > 0
+    )
     result["weapons"] = weapons
     result["has_weapon"] = len(weapons) > 0
 
     now = time.time()
     generated_alerts = []
 
-    # Process weapon emergency alerts
+    # Process weapon emergency alerts with temporal tracking verification
     for w_obj in weapons:
         w_cls = w_obj["class"]
-        w_key = f"weapon_{req.camera_id}_{w_cls}"
+        w_tid = w_obj.get("track_id", "")
+        # Require confirmation across consecutive frames before firing emergency alert
+        is_confirmed = w_obj.get("is_confirmed", True)
+        if not is_confirmed:
+            continue
+
+        w_key = f"weapon_{req.camera_id}_{w_cls}_{w_tid}"
         last_w_alert = _last_weapon_alert_times.get(w_key, 0)
-        if now - last_w_alert > 3.0:
+        if now - last_w_alert > 4.0:
             _last_weapon_alert_times[w_key] = now
             wx, wy, ww, wh = w_obj["bbox"]
             fh, fw = frame.shape[:2]
@@ -231,7 +242,8 @@ def mobile_frame_endpoint(req: MobileFrameRequest):
                 confidence=w_obj["confidence"],
                 snapshot=snap_b64,
                 camera_id=req.camera_id,
-                camera_name=req.camera_name or "Mobile Phone Camera"
+                camera_name=req.camera_name or "Mobile Phone Camera",
+                track_id=w_tid
             )
             generated_alerts.append(w_alert)
 
@@ -402,20 +414,30 @@ def detect_endpoint(req: DetectRequest):
     result["bodies"] = bodies
     result["has_body"] = len(bodies) > 0
 
-    # Process weapon scanning (knives, guns/pistols)
-    weapons = weapon_detector.detect_weapons(frame, custom_conf=req.weapon_threshold)
+    # Process weapon scanning (knives, guns/pistols) with actor presence gating
+    weapons = weapon_detector.detect_weapons(
+        frame,
+        custom_conf=req.weapon_threshold,
+        camera_id=req.camera_id or "cam_main",
+        has_actor=len(bodies) > 0 or len(result.get("faces", [])) > 0
+    )
     result["weapons"] = weapons
     result["has_weapon"] = len(weapons) > 0
 
     now = time.time()
     generated_alerts = []
 
-    # Process weapon emergency alerts
+    # Process weapon emergency alerts with temporal tracking verification
     for w_obj in weapons:
         w_cls = w_obj["class"]
-        w_key = f"weapon_{req.camera_id or 'cam_main'}_{w_cls}"
+        w_tid = w_obj.get("track_id", "")
+        is_confirmed = w_obj.get("is_confirmed", True)
+        if not is_confirmed:
+            continue
+
+        w_key = f"weapon_{req.camera_id or 'cam_main'}_{w_cls}_{w_tid}"
         last_w_alert = _last_weapon_alert_times.get(w_key, 0)
-        if now - last_w_alert > 3.0:
+        if now - last_w_alert > 4.0:
             _last_weapon_alert_times[w_key] = now
             wx, wy, ww, wh = w_obj["bbox"]
             fh, fw = frame.shape[:2]
@@ -433,7 +455,8 @@ def detect_endpoint(req: DetectRequest):
                 confidence=w_obj["confidence"],
                 snapshot=snap_b64,
                 camera_id=req.camera_id or "cam_main",
-                camera_name=req.camera_name or "Main Surveillance"
+                camera_name=req.camera_name or "Main Surveillance",
+                track_id=w_tid
             )
             generated_alerts.append(w_alert)
 
