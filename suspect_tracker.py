@@ -135,3 +135,4 @@ def auto_enroll_armed_suspect(
     )
     print(f"[AutoEnroll] Enrolled new armed suspect '{suspect_tag}' from camera '{camera_name}' into watchlist!")
     return new_record
+

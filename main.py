@@ -37,6 +37,9 @@ face_engine = FaceEngine()
 body_detector = BodyDetector()
 
 # Throttle alerts per player/camera and weapon/camera
+# Configurable 10-Minute Alert Cooldown (600 seconds) to prevent spamming duplicate alerts
+ALERT_COOLDOWN_SECONDS = 600.0
+
 _last_alert_times = {}
 _last_weapon_alert_times = {}
 _last_suspect_auto_enroll = {}  # camera_id -> timestamp to prevent duplicate rapid auto-enrolls
@@ -50,7 +53,7 @@ class DetectRequest(BaseModel):
     force_recognition: bool = False
     camera_id: Optional[str] = "cam_main"
     camera_name: Optional[str] = "Main Camera"
-    weapon_threshold: Optional[float] = 0.20
+    weapon_threshold: Optional[float] = 0.25
 
 
 class MobileFrameRequest(BaseModel):
@@ -58,7 +61,7 @@ class MobileFrameRequest(BaseModel):
     camera_name: Optional[str] = "Mobile Phone Camera"
     image: str
     force_recognition: bool = True
-    weapon_threshold: Optional[float] = 0.20
+    weapon_threshold: Optional[float] = 0.25
 
 
 class CameraConfigRequest(BaseModel):
@@ -219,14 +222,15 @@ def mobile_frame_endpoint(req: MobileFrameRequest):
     for w_obj in weapons:
         w_cls = w_obj["class"]
         w_tid = w_obj.get("track_id", "")
-        # Require confirmation across consecutive frames before firing emergency alert
+        # Require confirmation before firing emergency alert
         is_confirmed = w_obj.get("is_confirmed", True)
         if not is_confirmed:
             continue
 
-        w_key = f"weapon_{req.camera_id}_{w_cls}_{w_tid}"
+        # 10-Minute Cooldown keyed by camera and weapon class (prevents track ID jitter from spamming)
+        w_key = f"weapon_{req.camera_id}_{w_cls}"
         last_w_alert = _last_weapon_alert_times.get(w_key, 0)
-        if now - last_w_alert > 4.0:
+        if now - last_w_alert > ALERT_COOLDOWN_SECONDS:
             _last_weapon_alert_times[w_key] = now
             wx, wy, ww, wh = w_obj["bbox"]
             fh, fw = frame.shape[:2]
@@ -251,7 +255,7 @@ def mobile_frame_endpoint(req: MobileFrameRequest):
 
             # --- AUTO-ENROLL ARMED SUSPECT FOR CROSS-CAMERA DETECTION ---
             last_enroll = _last_suspect_auto_enroll.get(req.camera_id, 0)
-            if now - last_enroll > 5.0:
+            if now - last_enroll > ALERT_COOLDOWN_SECONDS:
                 assoc_face = find_associated_face_for_weapon(
                     weapon_bbox=w_obj["bbox"],
                     faces=result.get("faces", []),
@@ -277,9 +281,10 @@ def mobile_frame_endpoint(req: MobileFrameRequest):
         if face.get("is_match") and face.get("person_id"):
             pid = face["person_id"]
             player_obj = players_by_id.get(pid, {})
-            key = f"{req.camera_id}_{pid}"
+            # 10-Minute Cooldown keyed by camera and suspect ID
+            key = f"face_{req.camera_id}_{pid}"
             last_alert = _last_alert_times.get(key, 0)
-            if now - last_alert > 3.5:
+            if now - last_alert > ALERT_COOLDOWN_SECONDS:
                 _last_alert_times[key] = now
                 x, y, w, h = face["bbox"]
                 fh, fw = frame.shape[:2]
@@ -484,6 +489,9 @@ def detect_endpoint(req: DetectRequest):
     now = time.time()
     generated_alerts = []
 
+    cam_id = req.camera_id or "cam_main"
+    cam_name = req.camera_name or "Main Surveillance"
+
     # Process weapon emergency alerts with temporal tracking verification
     for w_obj in weapons:
         w_cls = w_obj["class"]
@@ -492,9 +500,10 @@ def detect_endpoint(req: DetectRequest):
         if not is_confirmed:
             continue
 
-        w_key = f"weapon_{req.camera_id or 'cam_main'}_{w_cls}_{w_tid}"
+        # 10-Minute Cooldown keyed by camera and weapon class (prevents track ID jitter from spamming)
+        w_key = f"weapon_{cam_id}_{w_cls}"
         last_w_alert = _last_weapon_alert_times.get(w_key, 0)
-        if now - last_w_alert > 4.0:
+        if now - last_w_alert > ALERT_COOLDOWN_SECONDS:
             _last_weapon_alert_times[w_key] = now
             wx, wy, ww, wh = w_obj["bbox"]
             fh, fw = frame.shape[:2]
@@ -511,15 +520,15 @@ def detect_endpoint(req: DetectRequest):
                 label=w_obj["label"],
                 confidence=w_obj["confidence"],
                 snapshot=snap_b64,
-                camera_id=req.camera_id or "cam_main",
-                camera_name=req.camera_name or "Main Surveillance",
+                camera_id=cam_id,
+                camera_name=cam_name,
                 track_id=w_tid
             )
             generated_alerts.append(w_alert)
 
             # --- AUTO-ENROLL ARMED SUSPECT FOR CROSS-CAMERA DETECTION ---
-            last_enroll = _last_suspect_auto_enroll.get(req.camera_id or "cam_main", 0)
-            if now - last_enroll > 5.0:
+            last_enroll = _last_suspect_auto_enroll.get(cam_id, 0)
+            if now - last_enroll > ALERT_COOLDOWN_SECONDS:
                 assoc_face = find_associated_face_for_weapon(
                     weapon_bbox=w_obj["bbox"],
                     faces=result.get("faces", []),
@@ -527,13 +536,13 @@ def detect_endpoint(req: DetectRequest):
                     frame_shape=frame.shape[:2]
                 )
                 if assoc_face is not None:
-                    _last_suspect_auto_enroll[req.camera_id or "cam_main"] = now
+                    _last_suspect_auto_enroll[cam_id] = now
                     enrolled = auto_enroll_armed_suspect(
                         frame_bgr=frame,
                         weapon_obj=w_obj,
                         associated_face=assoc_face,
-                        camera_id=req.camera_id or "cam_main",
-                        camera_name=req.camera_name or "Main Surveillance",
+                        camera_id=cam_id,
+                        camera_name=cam_name,
                         face_engine=face_engine
                     )
                     if enrolled:
@@ -564,9 +573,10 @@ def detect_endpoint(req: DetectRequest):
                 snap_b64 = "data:image/jpeg;base64," + base64.b64encode(buf.tobytes()).decode("utf-8")
             face["snapshot"] = snap_b64
 
-            key = f"{req.camera_id or 'cam_main'}_{pid}"
+            # 10-Minute Cooldown keyed by camera and suspect ID
+            key = f"face_{cam_id}_{pid}"
             last_alert = _last_alert_times.get(key, 0)
-            if now - last_alert > 3.0:
+            if now - last_alert > ALERT_COOLDOWN_SECONDS:
                 _last_alert_times[key] = now
                 is_masked = face.get("is_masked", False)
 
@@ -577,13 +587,13 @@ def detect_endpoint(req: DetectRequest):
                     player_obj.get("auto_enrolled") or
                     "ARMED SUSPECT" in str(face["name"]).upper()
                 )
-                is_cross_camera = is_armed_suspect and (p_origin and p_origin != (req.camera_id or "cam_main"))
+                is_cross_camera = is_armed_suspect and (p_origin and p_origin != cam_id)
 
                 if is_cross_camera:
                     p_name = f"🚨 CROSS-CAM ALERT: {face['name']}"
                     info_text = (
                         f"CRITICAL: Armed suspect first seen on camera '{p_origin}' "
-                        f"has now transitioned and was detected on '{req.camera_name or req.camera_id}'!"
+                        f"has now transitioned and was detected on '{cam_name}'!"
                     )
                     alert_type = "CROSS_CAMERA_ARMED_TRANSITION"
                     threat_level = "CRITICAL"
@@ -604,8 +614,8 @@ def detect_endpoint(req: DetectRequest):
                     info=info_text,
                     confidence=face["confidence"] / 100.0,
                     snapshot=snap_b64,
-                    camera_id=req.camera_id or "cam_main",
-                    camera_name=req.camera_name or "Main Surveillance",
+                    camera_id=cam_id,
+                    camera_name=cam_name,
                     alert_type=alert_type,
                     threat_level=threat_level,
                     origin_camera_id=p_origin
@@ -615,6 +625,15 @@ def detect_endpoint(req: DetectRequest):
     result["alerts_generated"] = generated_alerts
     result["has_alert"] = len(generated_alerts) > 0
     return result
+
+
+@app.post("/api/alerts/reset_cooldown")
+def reset_alert_cooldown():
+    """Resets all 10-minute alert suppression cooldown timers."""
+    _last_alert_times.clear()
+    _last_weapon_alert_times.clear()
+    _last_suspect_auto_enroll.clear()
+    return {"status": "success", "message": "All alert cooldown timers have been reset."}
 
 
 # ---------------- ALERTS ENDPOINTS ----------------

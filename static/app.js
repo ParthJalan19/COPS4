@@ -4,7 +4,11 @@ let currentFocusCam = null;
 let currentGridLayout = "2x2";
 let networkIp = "127.0.0.1";
 let serverPort = 8000;
-let currentWeaponThreshold = 0.18;
+let currentWeaponThreshold = 0.25;
+
+// 10-Minute Alert Suppression Cooldown (600,000 ms) for Modal Popups and Audible Alarms
+const FRONTEND_ALERT_COOLDOWN_MS = 10 * 60 * 1000;
+const _lastFrontendModalAlertTimes = {};
 
 // DOM Elements
 const cameraWallGrid = document.getElementById("camera-wall-grid");
@@ -516,70 +520,86 @@ function handleDetectionResult(camId, camName, data, capturedDataUrl, overlayEl,
     }
   }
 
-  // Trigger Immediate Weapon Threat Alert
+  // Trigger Immediate Weapon Threat Alert (Guarded by 10-Minute Cooldown)
   if (identifiedWeapon) {
-    playThreatTone();
-    const icon = identifiedWeapon.class === "knife" ? "🔪" : "🔫";
+    const weaponModalKey = `weapon_${camId}_${identifiedWeapon.class}`;
+    const lastModalTime = _lastFrontendModalAlertTimes[weaponModalKey] || 0;
+    const now = Date.now();
 
-    // Pause this camera feed so the threat is held on screen
-    tile.dataset.paused = "true";
-    if (holdBanner) {
-      holdBanner.innerHTML = `<span>🚨 ARMED THREAT: ${icon} ${identifiedWeapon.label.toUpperCase()}</span>`;
-      holdBanner.classList.remove("hidden");
+    // Only popup modal, play siren tone, and pause camera once per 10-minute interval
+    if (now - lastModalTime >= FRONTEND_ALERT_COOLDOWN_MS) {
+      _lastFrontendModalAlertTimes[weaponModalKey] = now;
+      playThreatTone();
+      const icon = identifiedWeapon.class === "knife" ? "🔪" : "🔫";
+
+      // Pause this camera feed so the threat is held on screen
+      tile.dataset.paused = "true";
+      if (holdBanner) {
+        holdBanner.innerHTML = `<span>🚨 ARMED THREAT: ${icon} ${identifiedWeapon.label.toUpperCase()}</span>`;
+        holdBanner.classList.remove("hidden");
+      }
+      if (btnResume) btnResume.classList.remove("hidden");
+
+      // Open the Critical Weapon Alert Modal
+      if (modalWeaponImg) modalWeaponImg.src = capturedDataUrl;
+      if (modalWeaponType) modalWeaponType.textContent = `${icon} ${identifiedWeapon.label.toUpperCase()}`;
+      if (modalWeaponConfidence) modalWeaponConfidence.textContent = `${identifiedWeapon.confidence}% Visual Match`;
+      if (modalWeaponCam) modalWeaponCam.textContent = camName;
+      if (weaponAlertModal) weaponAlertModal.classList.remove("hidden");
+
+      // Update bottom match alert box
+      matchName.innerHTML = `<span style="color: #ff1744; font-weight: 800;">${icon} CRITICAL WEAPON DETECTED: ${identifiedWeapon.label.toUpperCase()}</span>`;
+      matchCamName.textContent = camName;
+      matchInfo.textContent = `Armed Threat: Visual Weapon Detection confirmed at ${identifiedWeapon.confidence}% confidence`;
+      matchConfidence.textContent = identifiedWeapon.confidence + "%";
+      matchAlertBox.classList.remove("hidden");
+
+      loadAlerts();
     }
-    if (btnResume) btnResume.classList.remove("hidden");
-
-    // Open the Critical Weapon Alert Modal
-    if (modalWeaponImg) modalWeaponImg.src = capturedDataUrl;
-    if (modalWeaponType) modalWeaponType.textContent = `${icon} ${identifiedWeapon.label.toUpperCase()}`;
-    if (modalWeaponConfidence) modalWeaponConfidence.textContent = `${identifiedWeapon.confidence}% Visual Match`;
-    if (modalWeaponCam) modalWeaponCam.textContent = camName;
-    if (weaponAlertModal) weaponAlertModal.classList.remove("hidden");
-
-    // Update bottom match alert box
-    matchName.innerHTML = `<span style="color: #ff1744; font-weight: 800;">${icon} CRITICAL WEAPON DETECTED: ${identifiedWeapon.label.toUpperCase()}</span>`;
-    matchCamName.textContent = camName;
-    matchInfo.textContent = `Armed Threat: Visual Weapon Detection confirmed at ${identifiedWeapon.confidence}% confidence`;
-    matchConfidence.textContent = identifiedWeapon.confidence + "%";
-    matchAlertBox.classList.remove("hidden");
-
-    loadAlerts();
   }
 
-  // Trigger Watchlist Player Target Alert
+  // Trigger Watchlist Player Target Alert (Guarded by 10-Minute Cooldown)
   if (identifiedTarget) {
-    playThreatTone();
-    // Pause only this camera feed and hold view
-    tile.dataset.paused = "true";
-    if (holdBanner) holdBanner.classList.remove("hidden");
-    if (btnResume) btnResume.classList.remove("hidden");
+    const targetModalKey = `target_${camId}_${identifiedTarget.person_id || identifiedTarget.name}`;
+    const lastModalTime = _lastFrontendModalAlertTimes[targetModalKey] || 0;
+    const now = Date.now();
 
-    // Show Popup Modal with Camera Source
-    modalLiveImg.src = identifiedTarget.snapshot || capturedDataUrl;
-    modalRegisteredImg.src = identifiedTarget.registered_image || "/static/placeholder.png";
-    const isMaskedTarget = identifiedTarget.is_masked;
-    modalPersonName.textContent = isMaskedTarget ? `${identifiedTarget.name} [😷 MASKED]` : identifiedTarget.name;
-    modalCameraName.textContent = camName;
-    modalConfidence.textContent = isMaskedTarget
-      ? `${identifiedTarget.confidence}% Ocular / Cornea Match`
-      : `${identifiedTarget.confidence}% Facial Similarity`;
-    modalDetails.textContent = isMaskedTarget
-      ? `👁️ Periocular Biometrics Match: Suspect identified while wearing facial covering/mask.`
-      : (identifiedTarget.info || identifiedTarget.details || "Watchlist Target");
-    alertModal.classList.remove("hidden");
+    // Only popup modal, play siren tone, and pause camera once per 10-minute interval
+    if (now - lastModalTime >= FRONTEND_ALERT_COOLDOWN_MS) {
+      _lastFrontendModalAlertTimes[targetModalKey] = now;
+      playThreatTone();
+      // Pause only this camera feed and hold view
+      tile.dataset.paused = "true";
+      if (holdBanner) holdBanner.classList.remove("hidden");
+      if (btnResume) btnResume.classList.remove("hidden");
 
-    // Update bottom match alert box
-    matchName.innerHTML = isMaskedTarget
-      ? `<span style="color: #ff7b72;">🚨 ${identifiedTarget.name} [😷 MASKED SUSPECT]</span>`
-      : identifiedTarget.name;
-    matchCamName.textContent = camName;
-    matchInfo.textContent = isMaskedTarget
-      ? `Cornea & Ocular Biometric Match (${identifiedTarget.confidence}%) - Face Occlusion / Mask Detected`
-      : (identifiedTarget.info || "Similar Face Structure Matched");
-    matchConfidence.textContent = identifiedTarget.confidence + "%";
-    matchAlertBox.classList.remove("hidden");
+      // Show Popup Modal with Camera Source
+      modalLiveImg.src = identifiedTarget.snapshot || capturedDataUrl;
+      modalRegisteredImg.src = identifiedTarget.registered_image || "/static/placeholder.png";
+      const isMaskedTarget = identifiedTarget.is_masked;
+      modalPersonName.textContent = isMaskedTarget ? `${identifiedTarget.name} [😷 MASKED]` : identifiedTarget.name;
+      modalCameraName.textContent = camName;
+      modalConfidence.textContent = isMaskedTarget
+        ? `${identifiedTarget.confidence}% Ocular / Cornea Match`
+        : `${identifiedTarget.confidence}% Facial Similarity`;
+      modalDetails.textContent = isMaskedTarget
+        ? `👁️ Periocular Biometrics Match: Suspect identified while wearing facial covering/mask.`
+        : (identifiedTarget.info || identifiedTarget.details || "Watchlist Target");
+      alertModal.classList.remove("hidden");
 
-    loadAlerts();
+      // Update bottom match alert box
+      matchName.innerHTML = isMaskedTarget
+        ? `<span style="color: #ff7b72;">🚨 ${identifiedTarget.name} [😷 MASKED SUSPECT]</span>`
+        : identifiedTarget.name;
+      matchCamName.textContent = camName;
+      matchInfo.textContent = isMaskedTarget
+        ? `Cornea & Ocular Biometric Match (${identifiedTarget.confidence}%) - Face Occlusion / Mask Detected`
+        : (identifiedTarget.info || "Similar Face Structure Matched");
+      matchConfidence.textContent = identifiedTarget.confidence + "%";
+      matchAlertBox.classList.remove("hidden");
+
+      loadAlerts();
+    }
   }
 }
 
