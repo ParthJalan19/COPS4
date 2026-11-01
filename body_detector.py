@@ -7,13 +7,27 @@ from typing import List, Dict, Any, Tuple
 CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
 MODEL_PATH = os.path.join(CURRENT_DIR, "models", "person_detection_yolov8.onnx")
 
+# COCO classes for common everyday objects frequently misidentified by weak weapon models
+CONFUSER_CLASSES = {
+    67: "cell phone",
+    65: "remote",
+    41: "cup",
+    39: "bottle",
+    64: "mouse",
+    73: "book",
+    76: "scissors",
+    26: "handbag",
+    24: "backpack",
+    27: "tie"
+}
+
 
 class BodyDetector:
     """
-    High-accuracy, lightweight YOLOv8n Full-Body Human Detector.
+    High-accuracy, lightweight YOLOv8n Full-Body Human Detector & Confuser Disambiguator.
     Runs on CPU with letterbox preprocessing and vectorized candidate filtering.
     Detects full human bodies (head to toe), calculates posture (standing/seated),
-    and associates with face & weapon detections.
+    and extracts everyday objects (phones, cups, remotes) to suppress false weapon alerts.
     """
 
     def __init__(self, model_path: str = MODEL_PATH):
@@ -24,6 +38,7 @@ class BodyDetector:
         self.net.setPreferableBackend(cv2.dnn.DNN_BACKEND_OPENCV)
         self.net.setPreferableTarget(cv2.dnn.DNN_TARGET_CPU)
         self.input_size = (640, 640)
+        self.last_confusers: List[Dict[str, Any]] = []
         print(f"[BodyDetector] Loaded YOLOv8 Full Body Detector from {os.path.basename(model_path)}")
 
     def _letterbox(self, img_bgr: np.ndarray) -> Tuple[np.ndarray, float, int, int]:
@@ -65,6 +80,27 @@ class BodyDetector:
         )
         self.net.setInput(blob)
         preds = self.net.forward()  # Shape: (1, 84, 8400)
+
+        # Extract common everyday confusers (cell phones, remotes, cups, etc.) to prevent false alarms
+        confusers = []
+        for c_id, c_name in CONFUSER_CLASSES.items():
+            c_scores = preds[0, 4 + c_id, :]
+            c_idx = np.where(c_scores >= 0.22)[0]
+            for idx in c_idx:
+                c_cx = (preds[0, 0, idx] - pad_w) / r
+                c_cy = (preds[0, 1, idx] - pad_h) / r
+                c_bw = preds[0, 2, idx] / r
+                c_bh = preds[0, 3, idx] / r
+                cx1 = int(np.clip(c_cx - c_bw / 2.0, 0, w0))
+                cy1 = int(np.clip(c_cy - c_bh / 2.0, 0, h0))
+                cw = int(np.clip(c_bw, 1, w0 - cx1))
+                ch = int(np.clip(c_bh, 1, h0 - cy1))
+                confusers.append({
+                    "class": c_name,
+                    "confidence": round(float(c_scores[idx]) * 100, 1),
+                    "bbox": [cx1, cy1, cw, ch]
+                })
+        self.last_confusers = confusers
 
         # Class 0 in COCO is 'person'
         person_scores = preds[0, 4, :]  # Shape: (8400,)
@@ -123,3 +159,7 @@ class BodyDetector:
                 })
 
         return results
+
+    def get_last_confusers(self) -> List[Dict[str, Any]]:
+        """Returns the everyday objects (phones, cups, remotes) detected in the last processed frame."""
+        return getattr(self, "last_confusers", [])

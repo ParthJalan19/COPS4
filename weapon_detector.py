@@ -2,12 +2,14 @@
 COPS-4 Optimized & Calibrated Weapon Detection Engine.
 Features:
 - Dual-Model YOLOv8 Threat Architecture (Specialized Knives/Blades + Pistols/Firearms)
-- Vectorized CPU-optimized inference with bound OpenCV thread count
-- Class-calibrated dynamic confidence thresholds (pistol: 0.28, knife: 0.24)
-- Geometric aspect-ratio and edge-sliver validation to eliminate false positives
-- Multi-scale central ROI zoom refinement for small/distant objects
-- NMS with cross-class conflict resolution
-- Stateful integration with WeaponTemporalTracker
+- Multi-Layered False Positive Filtering:
+  1. Negative object disambiguation (suppresses cell phones, remotes, cups, bottles via COCO)
+  2. Face/Head overlap suppression (prevents face/hair/glasses false alarms)
+  3. Actor spatial proximity gating (ensures weapons are within human reach; rejects empty-room clutter)
+  4. Geometric aspect-ratio and edge-sliver validation (eliminates borders, poles, blinds)
+  5. Cross-class NMS conflict suppression
+  6. Multi-scale ROI zoom refinement for distant objects
+  7. Multi-frame temporal persistence tracking (requires 3 consecutive frames to confirm)
 """
 
 import os
@@ -56,10 +58,25 @@ def calculate_box_iou(boxA, boxB) -> float:
     return inter_area / union_area if union_area > 0 else 0.0
 
 
+def calculate_box_overlap_ratio(boxA, boxB) -> float:
+    """Calculates intersection area relative to boxA's area (how much of boxA is inside boxB)."""
+    xA = max(boxA[0], boxB[0])
+    yA = max(boxA[1], boxB[1])
+    xB = min(boxA[0] + boxA[2], boxB[0] + boxB[2])
+    yB = min(boxA[1] + boxA[3], boxB[1] + boxB[3])
+
+    inter_w = max(0, xB - xA)
+    inter_h = max(0, yB - yA)
+    inter_area = inter_w * inter_h
+
+    boxA_area = max(1, boxA[2] * boxA[3])
+    return float(inter_area) / float(boxA_area)
+
+
 class WeaponDetector:
     def __init__(
         self,
-        conf_threshold: float = 0.25,
+        conf_threshold: float = 0.42,
         nms_threshold: float = 0.40,
         use_ensemble: bool = True,
         enable_temporal_tracking: bool = True
@@ -69,12 +86,12 @@ class WeaponDetector:
         self.use_ensemble = use_ensemble
         self.enable_temporal_tracking = enable_temporal_tracking
 
-        # Calibrated baseline confidence thresholds per weapon class
+        # Calibrated baseline confidence thresholds per weapon class (suppresses weak model noise)
         self.class_thresholds = {
-            "pistol": 0.28,
-            "knife": 0.24,
-            "rifle": 0.28,
-            "grenade": 0.35
+            "pistol": 0.42,
+            "knife": 0.38,
+            "rifle": 0.42,
+            "grenade": 0.45
         }
 
         self.net1 = None
@@ -101,7 +118,7 @@ class WeaponDetector:
                 print(f"[WeaponDetector] Error loading Model 2: {e}")
 
     def set_threshold(self, threshold: float):
-        self.conf_threshold = max(0.12, min(0.90, threshold))
+        self.conf_threshold = max(0.20, min(0.90, threshold))
 
     def _is_valid_geometry(self, cls_name: str, bbox: List[int], img_shape: Tuple[int, int]) -> bool:
         """
@@ -111,27 +128,26 @@ class WeaponDetector:
         x, y, w, h = bbox
         ih, iw = img_shape[:2]
 
-        # Minimum physical size requirement: at least 20px on each axis and 500 px area
-        if w < 20 or h < 20 or (w * h) < 500:
+        # Minimum physical size requirement: at least 22px on each axis and 550 px area
+        if w < 22 or h < 22 or (w * h) < 550:
             return False
 
-        # Check if the box is touching or nearly touching the image edge
         touching_edge = (x <= 3 or y <= 3 or (x + w) >= iw - 3 or (y + h) >= ih - 3)
         aspect_ratio = max(w / max(1, h), h / max(1, w))
 
         if cls_name in ("pistol", "rifle"):
-            # Pistols and handguns have realistic aspect ratios <= 2.8.
-            # Long thin rectangles (>2.8) touching image borders are door edges, poles or blinds.
-            if aspect_ratio > 2.8:
+            # Pistols and handguns have realistic aspect ratios <= 2.6.
+            # Long thin rectangles (>2.6) touching image borders are door edges, poles or blinds.
+            if aspect_ratio > 2.6:
                 return False
-            if touching_edge and (w < 40 or h < 40):
+            if touching_edge and (w < 45 or h < 45):
                 return False
 
         elif cls_name == "knife":
-            # Knives/blades can be elongated along the blade axis, but ratio rarely exceeds 7.0
-            if aspect_ratio > 7.0:
+            # Knives/blades can be elongated along the blade axis, but ratio rarely exceeds 6.5
+            if aspect_ratio > 6.5:
                 return False
-            if touching_edge and min(w, h) < 18:
+            if touching_edge and min(w, h) < 20:
                 return False
 
         return True
@@ -148,9 +164,9 @@ class WeaponDetector:
         blob = cv2.dnn.blobFromImage(lb_img, 1.0 / 255.0, (640, 640), swapRB=True, crop=False)
 
         # Scale per-class thresholds based on user-chosen sensitivity
-        scale = conf_thresh / 0.25
-        eff_pistol = max(0.18, min(0.85, self.class_thresholds["pistol"] * scale))
-        eff_knife = max(0.16, min(0.85, self.class_thresholds["knife"] * scale))
+        scale = conf_thresh / 0.42
+        eff_pistol = max(0.25, min(0.85, self.class_thresholds["pistol"] * scale))
+        eff_knife = max(0.22, min(0.85, self.class_thresholds["knife"] * scale))
 
         boxes = []
         confs = []
@@ -226,7 +242,6 @@ class WeaponDetector:
                     for b_idx, ex_box in enumerate(boxes):
                         if calculate_box_iou(bbox, ex_box) > 0.40:
                             matched_existing = True
-                            # Ensemble boost: take highest confidence or boost if both agree
                             if classes[b_idx] == "pistol":
                                 confs[b_idx] = max(confs[b_idx], float(valid_s[i]))
                             break
@@ -244,11 +259,15 @@ class WeaponDetector:
         frame_bgr: np.ndarray,
         custom_conf: Optional[float] = None,
         camera_id: str = "cam_main",
-        has_actor: bool = True
+        has_actor: bool = True,
+        bodies: Optional[List[Dict[str, Any]]] = None,
+        faces: Optional[List[Dict[str, Any]]] = None,
+        confusers: Optional[List[Dict[str, Any]]] = None
     ) -> List[Dict[str, Any]]:
         """
         Detects weapons using vectorized inference, multi-scale ROI refinement,
-        geometry validation, cross-class NMS, and temporal tracking.
+        geometry validation, negative object disambiguation, actor spatial proximity gating,
+        cross-class NMS, and multi-frame temporal tracking.
         """
         if frame_bgr is None or (self.net1 is None and self.net2 is None):
             return []
@@ -328,13 +347,75 @@ class WeaponDetector:
                 final_classes.append(nms_classes[i])
                 final_labels.append(nms_labels[i])
 
+        # --- MULTI-LAYERED FALSE POSITIVE FILTERING ---
+        validated_boxes = []
+        validated_confs = []
+        validated_classes = []
+        validated_labels = []
+
+        for box, conf, cls_n, lbl in zip(final_boxes, final_confs, final_classes, final_labels):
+            bx, by, bw, bh = box
+
+            # Filter 1: Everyday Object Confuser Suppression (cell phones, remotes, cups, etc.)
+            if confusers:
+                is_confuser = False
+                for c in confusers:
+                    overlap = calculate_box_overlap_ratio(box, c["bbox"])
+                    iou = calculate_box_iou(box, c["bbox"])
+                    if (overlap >= 0.35 or iou >= 0.25) and c.get("confidence", 0) >= 22.0:
+                        is_confuser = True
+                        break
+                if is_confuser:
+                    continue
+
+            # Filter 2: Face / Head Overlap Suppression (face occlusions, glasses, hair)
+            if faces:
+                is_face_overlap = False
+                for f in faces:
+                    overlap = calculate_box_overlap_ratio(box, f["bbox"])
+                    if overlap >= 0.45:
+                        is_face_overlap = True
+                        break
+                if is_face_overlap:
+                    continue
+
+            # Filter 3: Actor Proximity & Empty Room Gating
+            if not has_actor:
+                # In an empty room with no detected human body or face, require high confidence
+                if conf < 0.70:
+                    continue
+            elif bodies and len(bodies) > 0:
+                # If humans are present, weapon must be within reachable distance of a human body
+                near_human = False
+                for b in bodies:
+                    px, py, pw, ph = b["bbox"]
+                    reach_pad_x = int(pw * 0.45)
+                    reach_pad_y = int(ph * 0.25)
+                    rx1 = max(0, px - reach_pad_x)
+                    ry1 = max(0, py - reach_pad_y)
+                    rx2 = px + pw + reach_pad_x
+                    ry2 = py + ph + reach_pad_y
+                    wcx = bx + bw / 2
+                    wcy = by + bh / 2
+                    if rx1 <= wcx <= rx2 and ry1 <= wcy <= ry2:
+                        near_human = True
+                        break
+                if not near_human and conf < 0.75:
+                    # Weapon candidate is far away on an empty background -> static clutter false alarm
+                    continue
+
+            validated_boxes.append(box)
+            validated_confs.append(conf)
+            validated_classes.append(cls_n)
+            validated_labels.append(lbl)
+
         raw_results = []
-        for i in range(len(final_boxes)):
+        for i in range(len(validated_boxes)):
             raw_results.append({
-                "class": final_classes[i],
-                "label": final_labels[i],
-                "confidence": round(float(final_confs[i]) * 100, 1),
-                "bbox": final_boxes[i]
+                "class": validated_classes[i],
+                "label": validated_labels[i],
+                "confidence": round(float(validated_confs[i]) * 100, 1),
+                "bbox": validated_boxes[i]
             })
 
         # Apply Temporal Association & Tracking
@@ -345,4 +426,4 @@ class WeaponDetector:
         return raw_results
 
 
-weapon_detector = WeaponDetector(conf_threshold=0.25, use_ensemble=True)
+weapon_detector = WeaponDetector(conf_threshold=0.42, use_ensemble=True)

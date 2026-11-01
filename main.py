@@ -53,7 +53,7 @@ class DetectRequest(BaseModel):
     force_recognition: bool = False
     camera_id: Optional[str] = "cam_main"
     camera_name: Optional[str] = "Main Camera"
-    weapon_threshold: Optional[float] = 0.25
+    weapon_threshold: Optional[float] = 0.42
 
 
 class MobileFrameRequest(BaseModel):
@@ -61,7 +61,7 @@ class MobileFrameRequest(BaseModel):
     camera_name: Optional[str] = "Mobile Phone Camera"
     image: str
     force_recognition: bool = True
-    weapon_threshold: Optional[float] = 0.25
+    weapon_threshold: Optional[float] = 0.42
 
 
 class CameraConfigRequest(BaseModel):
@@ -204,13 +204,17 @@ def mobile_frame_endpoint(req: MobileFrameRequest):
     bodies = body_detector.detect_bodies(frame, conf_thresh=0.35)
     result["bodies"] = bodies
     result["has_body"] = len(bodies) > 0
+    confusers = body_detector.get_last_confusers()
 
-    # Process weapon scanning (knives, guns/pistols) with actor presence gating
+    # Process weapon scanning (knives, guns/pistols) with actor presence & everyday object gating
     weapons = weapon_detector.detect_weapons(
         frame,
         custom_conf=req.weapon_threshold,
         camera_id=req.camera_id,
-        has_actor=len(bodies) > 0 or len(result.get("faces", [])) > 0
+        has_actor=len(bodies) > 0 or len(result.get("faces", [])) > 0,
+        bodies=bodies,
+        faces=result.get("faces", []),
+        confusers=confusers
     )
     result["weapons"] = weapons
     result["has_weapon"] = len(weapons) > 0
@@ -475,13 +479,17 @@ def detect_endpoint(req: DetectRequest):
     bodies = body_detector.detect_bodies(frame, conf_thresh=0.35)
     result["bodies"] = bodies
     result["has_body"] = len(bodies) > 0
+    confusers = body_detector.get_last_confusers()
 
-    # Process weapon scanning (knives, guns/pistols) with actor presence gating
+    # Process weapon scanning (knives, guns/pistols) with actor presence & everyday object gating
     weapons = weapon_detector.detect_weapons(
         frame,
         custom_conf=req.weapon_threshold,
         camera_id=req.camera_id or "cam_main",
-        has_actor=len(bodies) > 0 or len(result.get("faces", [])) > 0
+        has_actor=len(bodies) > 0 or len(result.get("faces", [])) > 0,
+        bodies=bodies,
+        faces=result.get("faces", []),
+        confusers=confusers
     )
     result["weapons"] = weapons
     result["has_weapon"] = len(weapons) > 0

@@ -336,7 +336,7 @@
               camera_name: cameraName,
               image: b64,
               force_recognition: true,
-              weapon_threshold: 0.25
+              weapon_threshold: 0.42
             })
           });
 
@@ -472,7 +472,9 @@
           ctx.fillText(wLabel, sx + 8, sy > 32 ? sy - 12 : sy + 20);
           ctx.restore();
 
-          matchedWeapon = weapon;
+          if (weapon.is_confirmed !== false) {
+            matchedWeapon = weapon;
+          }
         }
       }
 

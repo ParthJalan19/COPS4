@@ -4,7 +4,7 @@ let currentFocusCam = null;
 let currentGridLayout = "2x2";
 let networkIp = "127.0.0.1";
 let serverPort = 8000;
-let currentWeaponThreshold = 0.25;
+let currentWeaponThreshold = 0.42;
 
 // 10-Minute Alert Suppression Cooldown (600,000 ms) for Modal Popups and Audible Alarms
 const FRONTEND_ALERT_COOLDOWN_MS = 10 * 60 * 1000;
@@ -475,48 +475,71 @@ function handleDetectionResult(camId, camName, data, capturedDataUrl, overlayEl,
   // 2. Draw Weapons (Knives, Firearms / Pistols)
   if (data.weapons && data.weapons.length > 0) {
     for (const weapon of data.weapons) {
+      const isConfirmed = weapon.is_confirmed !== false;
       const [x, y, w, h] = weapon.bbox;
       const boxX = isVideoFeed ? (overlayEl.width - x - w) : x;
 
       ctx.save();
-      // Glowing Neon Crimson Threat Box
-      ctx.shadowColor = "#ff0055";
-      ctx.shadowBlur = 12;
-      ctx.lineWidth = 3.5;
-      ctx.strokeStyle = "#ff1744";
-      ctx.strokeRect(boxX, y, w, h);
+      if (isConfirmed) {
+        // Glowing Neon Crimson Threat Box
+        ctx.shadowColor = "#ff0055";
+        ctx.shadowBlur = 12;
+        ctx.lineWidth = 3.5;
+        ctx.strokeStyle = "#ff1744";
+        ctx.strokeRect(boxX, y, w, h);
 
-      // Tech HUD corner brackets
-      const corner = Math.min(18, w * 0.25, h * 0.25);
-      ctx.lineWidth = 4;
-      ctx.strokeStyle = "#ffffff";
-      ctx.beginPath();
-      // top-left
-      ctx.moveTo(boxX, y + corner); ctx.lineTo(boxX, y); ctx.lineTo(boxX + corner, y);
-      // top-right
-      ctx.moveTo(boxX + w - corner, y); ctx.lineTo(boxX + w, y); ctx.lineTo(boxX + w, y + corner);
-      // bottom-left
-      ctx.moveTo(boxX, y + h - corner); ctx.lineTo(boxX, y + h); ctx.lineTo(boxX + corner, y + h);
-      // bottom-right
-      ctx.moveTo(boxX + w - corner, y + h); ctx.lineTo(boxX + w, y + h); ctx.lineTo(boxX + w, y + h - corner);
-      ctx.stroke();
+        // Tech HUD corner brackets
+        const corner = Math.min(18, w * 0.25, h * 0.25);
+        ctx.lineWidth = 4;
+        ctx.strokeStyle = "#ffffff";
+        ctx.beginPath();
+        // top-left
+        ctx.moveTo(boxX, y + corner); ctx.lineTo(boxX, y); ctx.lineTo(boxX + corner, y);
+        // top-right
+        ctx.moveTo(boxX + w - corner, y); ctx.lineTo(boxX + w, y); ctx.lineTo(boxX + w, y + corner);
+        // bottom-left
+        ctx.moveTo(boxX, y + h - corner); ctx.lineTo(boxX, y + h); ctx.lineTo(boxX + corner, y + h);
+        // bottom-right
+        ctx.moveTo(boxX + w - corner, y + h); ctx.lineTo(boxX + w, y + h); ctx.lineTo(boxX + w, y + h - corner);
+        ctx.stroke();
 
-      // Weapon Label Tag
-      const icon = weapon.class === "knife" ? "🔪" : "🔫";
-      const tagText = `${icon} ARMED: ${weapon.label.toUpperCase()} (${weapon.confidence}%)`;
+        // Weapon Label Tag
+        const icon = weapon.class === "knife" ? "🔪" : "🔫";
+        const tagText = `${icon} ARMED: ${weapon.label.toUpperCase()} (${weapon.confidence}%)`;
 
-      ctx.font = "bold 13px Inter, sans-serif";
-      const textWidth = ctx.measureText(tagText).width;
-      const tagY = y > 26 ? y - 26 : y;
+        ctx.font = "bold 13px Inter, sans-serif";
+        const textWidth = ctx.measureText(tagText).width;
+        const tagY = y > 26 ? y - 26 : y;
 
-      ctx.fillStyle = "#d50000";
-      ctx.fillRect(boxX, tagY, textWidth + 18, 24);
+        ctx.fillStyle = "#d50000";
+        ctx.fillRect(boxX, tagY, textWidth + 18, 24);
 
-      ctx.fillStyle = "#ffffff";
-      ctx.fillText(tagText, boxX + 8, tagY + 17);
+        ctx.fillStyle = "#ffffff";
+        ctx.fillText(tagText, boxX + 8, tagY + 17);
+
+        // Only confirmed weapons trigger emergency modal & sirens
+        identifiedWeapon = weapon;
+      } else {
+        // Transient candidate undergoing multi-frame temporal verification
+        ctx.setLineDash([4, 4]);
+        ctx.lineWidth = 2;
+        ctx.strokeStyle = "#e3b341";
+        ctx.strokeRect(boxX, y, w, h);
+        ctx.setLineDash([]);
+
+        const hits = weapon.consecutive_hits || 1;
+        const tagText = `⚠️ ANALYZING THREAT (${hits}/3)`;
+        ctx.font = "11px Inter, sans-serif";
+        const textWidth = ctx.measureText(tagText).width;
+        const tagY = y > 20 ? y - 20 : y;
+
+        ctx.fillStyle = "rgba(227, 179, 65, 0.85)";
+        ctx.fillRect(boxX, tagY, textWidth + 10, 18);
+
+        ctx.fillStyle = "#000";
+        ctx.fillText(tagText, boxX + 5, tagY + 13);
+      }
       ctx.restore();
-
-      identifiedWeapon = weapon;
     }
   }
 
