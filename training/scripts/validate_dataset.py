@@ -201,3 +201,4 @@ if __name__ == "__main__":
     validator = DatasetValidator(args.data_dir, args.classes)
     validator.validate_all()
     validator.print_report()
+

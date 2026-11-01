@@ -954,15 +954,21 @@ async function loadWatchlist() {
       return;
     }
 
-    personsTbody.innerHTML = players.map(p => `
-      <tr>
+    personsTbody.innerHTML = players.map(p => {
+      const isAutoArmed = p.threat_level === "ARMED_SUSPECT" || p.auto_enrolled;
+      const badgeStyle = isAutoArmed ? "background: rgba(255, 23, 68, 0.2); color: #ff1744; border: 1px solid #ff1744;" : "";
+      const badgeText = isAutoArmed ? "🚨 ARMED SUSPECT" : "WATCHED";
+
+      return `
+      <tr style="${isAutoArmed ? 'background: rgba(255, 23, 68, 0.05);' : ''}">
         <td><img src="${p.image || '/static/placeholder.png'}" class="table-thumb" alt="${escapeHtml(p.name)}"></td>
-        <td class="name-cell">${escapeHtml(p.name)}</td>
+        <td class="name-cell" style="${isAutoArmed ? 'color: #ff1744; font-weight: 700;' : ''}">${escapeHtml(p.name)}</td>
         <td class="details-cell">${escapeHtml(p.info || '--')}</td>
-        <td><span class="badge-watched">WATCHED</span></td>
+        <td><span class="badge-watched" style="${badgeStyle}">${badgeText}</span></td>
         <td><button class="btn btn-danger" onclick="deleteFromWatchlist('${p.id}')">Remove</button></td>
       </tr>
-    `).join("");
+      `;
+    }).join("");
   } catch (err) {
     console.error("Failed to load watchlist:", err);
   }
@@ -991,19 +997,39 @@ async function loadAlerts() {
 
     logsTbody.innerHTML = alerts.map(a => {
       const isWeapon = a.alert_type === "WEAPON_DETECTED";
+      const isCrossCam = a.alert_type === "CROSS_CAMERA_ARMED_TRANSITION";
+      const isArmedSighting = a.alert_type === "ARMED_SUSPECT_SIGHTING";
       const icon = a.weapon_type === "knife" ? "🔪" : "🔫";
-      const badgeClass = isWeapon ? "badge-weapon-alert" : "badge-alert";
-      const badgeText = isWeapon ? `${icon} ARMED WEAPON` : "WATCHLIST MATCH";
-      const nameColor = isWeapon ? "#ff1744" : "#ff7b72";
-      const rowClass = isWeapon ? "row-weapon-threat" : "";
+
+      let badgeClass = "badge-alert";
+      let badgeText = "WATCHLIST MATCH";
+      let nameColor = "#ff7b72";
+      let rowClass = "";
+
+      if (isCrossCam) {
+        badgeClass = "badge-weapon-alert";
+        badgeText = "🚨 CROSS-CAM SIGHTING";
+        nameColor = "#ff0055";
+        rowClass = "row-weapon-threat";
+      } else if (isArmedSighting) {
+        badgeClass = "badge-weapon-alert";
+        badgeText = "⚠️ ARMED SUSPECT";
+        nameColor = "#ff5722";
+        rowClass = "row-weapon-threat";
+      } else if (isWeapon) {
+        badgeClass = "badge-weapon-alert";
+        badgeText = `${icon} ARMED WEAPON`;
+        nameColor = "#ff1744";
+        rowClass = "row-weapon-threat";
+      }
 
       return `
       <tr class="${rowClass}">
         <td class="time-cell">${escapeHtml(a.timestamp)}</td>
         <td>${a.snapshot ? `<img src="${a.snapshot}" class="table-thumb" alt="snap">` : '--'}</td>
         <td><span style="font-weight: 600; color: #58a6ff;">${escapeHtml(a.camera_name || 'Main Camera')}</span></td>
-        <td class="name-cell" style="color: ${nameColor}; font-weight: 700;">${isWeapon ? icon : '🚨'} ${escapeHtml(a.player_name)}</td>
-        <td><span class="badge-confidence" style="${isWeapon ? 'background: rgba(255, 23, 68, 0.2); color: #ff1744; border-color: #ff1744;' : ''}">${a.confidence}%</span></td>
+        <td class="name-cell" style="color: ${nameColor}; font-weight: 700;">${isWeapon ? icon : (isCrossCam ? '🚨' : '⚠️')} ${escapeHtml(a.player_name)}</td>
+        <td><span class="badge-confidence" style="${(isWeapon || isCrossCam) ? 'background: rgba(255, 23, 68, 0.2); color: #ff1744; border-color: #ff1744;' : ''}">${a.confidence}%</span></td>
         <td class="details-cell">${escapeHtml(a.info || '--')}</td>
         <td><span class="${badgeClass}">${badgeText}</span></td>
       </tr>

@@ -17,6 +17,7 @@ from face_engine import FaceEngine
 from weapon_detector import weapon_detector
 from body_detector import BodyDetector
 from ip_camera import stream_manager
+from suspect_tracker import find_associated_face_for_weapon, auto_enroll_armed_suspect
 
 app = FastAPI(title="COPS Camera Wall & Face Recognition System", version="3.0.0")
 
@@ -38,6 +39,7 @@ body_detector = BodyDetector()
 # Throttle alerts per player/camera and weapon/camera
 _last_alert_times = {}
 _last_weapon_alert_times = {}
+_last_suspect_auto_enroll = {}  # camera_id -> timestamp to prevent duplicate rapid auto-enrolls
 
 STATIC_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
 os.makedirs(STATIC_DIR, exist_ok=True)
@@ -247,10 +249,34 @@ def mobile_frame_endpoint(req: MobileFrameRequest):
             )
             generated_alerts.append(w_alert)
 
+            # --- AUTO-ENROLL ARMED SUSPECT FOR CROSS-CAMERA DETECTION ---
+            last_enroll = _last_suspect_auto_enroll.get(req.camera_id, 0)
+            if now - last_enroll > 5.0:
+                assoc_face = find_associated_face_for_weapon(
+                    weapon_bbox=w_obj["bbox"],
+                    faces=result.get("faces", []),
+                    bodies=result.get("bodies", []),
+                    frame_shape=frame.shape[:2]
+                )
+                if assoc_face is not None:
+                    _last_suspect_auto_enroll[req.camera_id] = now
+                    enrolled = auto_enroll_armed_suspect(
+                        frame_bgr=frame,
+                        weapon_obj=w_obj,
+                        associated_face=assoc_face,
+                        camera_id=req.camera_id,
+                        camera_name=req.camera_name or "Mobile Phone Camera",
+                        face_engine=face_engine
+                    )
+                    if enrolled:
+                        watchlist_players = database.get_watchlist()
+
     # Process watchlist target alerts (including masked suspects matched by ocular biometrics)
+    players_by_id = {p["id"]: p for p in watchlist_players}
     for face in result.get("faces", []):
         if face.get("is_match") and face.get("person_id"):
             pid = face["person_id"]
+            player_obj = players_by_id.get(pid, {})
             key = f"{req.camera_id}_{pid}"
             last_alert = _last_alert_times.get(key, 0)
             if now - last_alert > 3.5:
@@ -266,8 +292,33 @@ def mobile_frame_endpoint(req: MobileFrameRequest):
                     snap_b64 = "data:image/jpeg;base64," + base64.b64encode(buf.tobytes()).decode("utf-8")
 
                 is_masked = face.get("is_masked", False)
-                p_name = f"{face['name']} [😷 MASKED SUSPECT]" if is_masked else face["name"]
-                info_text = f"👁️ Ocular / Cornea Match ({face['confidence']}%) - Mask Detected" if is_masked else (face.get("info", "") or "Facial Recognition Match")
+                # Check if this person was an auto-enrolled armed suspect from another camera
+                p_origin = player_obj.get("origin_camera_id", "")
+                is_armed_suspect = (
+                    player_obj.get("threat_level") == "ARMED_SUSPECT" or
+                    player_obj.get("auto_enrolled") or
+                    "ARMED SUSPECT" in str(face["name"]).upper()
+                )
+                is_cross_camera = is_armed_suspect and (p_origin and p_origin != (req.camera_id or "cam_main"))
+
+                if is_cross_camera:
+                    p_name = f"🚨 CROSS-CAM ALERT: {face['name']}"
+                    info_text = (
+                        f"CRITICAL: Armed suspect first seen on camera '{p_origin}' "
+                        f"has now transitioned and was detected on '{req.camera_name or req.camera_id}'!"
+                    )
+                    alert_type = "CROSS_CAMERA_ARMED_TRANSITION"
+                    threat_level = "CRITICAL"
+                elif is_armed_suspect:
+                    p_name = f"🚨 {face['name']}"
+                    info_text = face.get("info", "") or "Auto-Enrolled Armed Suspect Detected"
+                    alert_type = "ARMED_SUSPECT_SIGHTING"
+                    threat_level = "HIGH"
+                else:
+                    p_name = f"{face['name']} [😷 MASKED SUSPECT]" if is_masked else face["name"]
+                    info_text = f"👁️ Ocular / Cornea Match ({face['confidence']}%) - Mask Detected" if is_masked else (face.get("info", "") or "Facial Recognition Match")
+                    alert_type = "PLAYER_WATCHLIST_MATCH"
+                    threat_level = "MEDIUM"
 
                 alert_record = database.generate_alert(
                     player_id=pid,
@@ -276,7 +327,10 @@ def mobile_frame_endpoint(req: MobileFrameRequest):
                     confidence=face["confidence"] / 100.0,
                     snapshot=snap_b64,
                     camera_id=req.camera_id,
-                    camera_name=req.camera_name or "Mobile Phone Camera"
+                    camera_name=req.camera_name or "Mobile Phone Camera",
+                    alert_type=alert_type,
+                    threat_level=threat_level,
+                    origin_camera_id=p_origin
                 )
                 generated_alerts.append(alert_record)
 
@@ -315,6 +369,9 @@ def list_watchlist():
             "info": p.get("info", p.get("details", "")),
             "image": p.get("image"),
             "status": p.get("status", "WATCHED"),
+            "threat_level": p.get("threat_level", "WATCHED"),
+            "origin_camera_id": p.get("origin_camera_id", ""),
+            "auto_enrolled": p.get("auto_enrolled", False),
             "created_at": p.get("created_at"),
             "has_embedding": bool(p.get("embedding"))
         })
@@ -460,7 +517,31 @@ def detect_endpoint(req: DetectRequest):
             )
             generated_alerts.append(w_alert)
 
+            # --- AUTO-ENROLL ARMED SUSPECT FOR CROSS-CAMERA DETECTION ---
+            last_enroll = _last_suspect_auto_enroll.get(req.camera_id or "cam_main", 0)
+            if now - last_enroll > 5.0:
+                assoc_face = find_associated_face_for_weapon(
+                    weapon_bbox=w_obj["bbox"],
+                    faces=result.get("faces", []),
+                    bodies=result.get("bodies", []),
+                    frame_shape=frame.shape[:2]
+                )
+                if assoc_face is not None:
+                    _last_suspect_auto_enroll[req.camera_id or "cam_main"] = now
+                    enrolled = auto_enroll_armed_suspect(
+                        frame_bgr=frame,
+                        weapon_obj=w_obj,
+                        associated_face=assoc_face,
+                        camera_id=req.camera_id or "cam_main",
+                        camera_name=req.camera_name or "Main Surveillance",
+                        face_engine=face_engine
+                    )
+                    if enrolled:
+                        watchlist_players = database.get_watchlist()
+                        players_by_id = {p["id"]: p for p in watchlist_players}
+
     # Process watchlist target alerts (including masked suspects matched by ocular biometrics)
+    players_by_id = {p["id"]: p for p in watchlist_players}
     for face in result.get("faces", []):
         if face.get("is_match") and face.get("person_id"):
             pid = face["person_id"]
@@ -488,8 +569,34 @@ def detect_endpoint(req: DetectRequest):
             if now - last_alert > 3.0:
                 _last_alert_times[key] = now
                 is_masked = face.get("is_masked", False)
-                p_name = f"{face['name']} [😷 MASKED SUSPECT]" if is_masked else face["name"]
-                info_text = f"👁️ Ocular / Cornea Match ({face['confidence']}%) - Mask Detected" if is_masked else (face.get("info", face.get("details", "")) or "Facial Recognition Match")
+
+                # Check if this person was an auto-enrolled armed suspect from another camera
+                p_origin = player_obj.get("origin_camera_id", "")
+                is_armed_suspect = (
+                    player_obj.get("threat_level") == "ARMED_SUSPECT" or
+                    player_obj.get("auto_enrolled") or
+                    "ARMED SUSPECT" in str(face["name"]).upper()
+                )
+                is_cross_camera = is_armed_suspect and (p_origin and p_origin != (req.camera_id or "cam_main"))
+
+                if is_cross_camera:
+                    p_name = f"🚨 CROSS-CAM ALERT: {face['name']}"
+                    info_text = (
+                        f"CRITICAL: Armed suspect first seen on camera '{p_origin}' "
+                        f"has now transitioned and was detected on '{req.camera_name or req.camera_id}'!"
+                    )
+                    alert_type = "CROSS_CAMERA_ARMED_TRANSITION"
+                    threat_level = "CRITICAL"
+                elif is_armed_suspect:
+                    p_name = f"🚨 {face['name']}"
+                    info_text = face.get("info", "") or "Auto-Enrolled Armed Suspect Detected"
+                    alert_type = "ARMED_SUSPECT_SIGHTING"
+                    threat_level = "HIGH"
+                else:
+                    p_name = f"{face['name']} [😷 MASKED SUSPECT]" if is_masked else face["name"]
+                    info_text = f"👁️ Ocular / Cornea Match ({face['confidence']}%) - Mask Detected" if is_masked else (face.get("info", face.get("details", "")) or "Facial Recognition Match")
+                    alert_type = "PLAYER_WATCHLIST_MATCH"
+                    threat_level = "MEDIUM"
 
                 alert_record = database.generate_alert(
                     player_id=pid,
@@ -498,7 +605,10 @@ def detect_endpoint(req: DetectRequest):
                     confidence=face["confidence"] / 100.0,
                     snapshot=snap_b64,
                     camera_id=req.camera_id or "cam_main",
-                    camera_name=req.camera_name or "Main Surveillance"
+                    camera_name=req.camera_name or "Main Surveillance",
+                    alert_type=alert_type,
+                    threat_level=threat_level,
+                    origin_camera_id=p_origin
                 )
                 generated_alerts.append(alert_record)
 

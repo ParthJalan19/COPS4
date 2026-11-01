@@ -137,3 +137,4 @@ Audit results recorded on the system:
 | **False Positive Suppression** | Single-frame instant alert | **Temporal IoU tracking ($K \ge 2$)** | Glare & phone false alarms eliminated |
 | **Alert Record Metadata** | Class, confidence, snapshot | **+ Track ID, Model version, Review status** | Enterprise audit trail |
 | **Training Pipeline** | None (ad-hoc) | **Isolated, validated, reproducible** | Production server completely protected |
+

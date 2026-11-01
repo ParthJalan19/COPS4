@@ -114,8 +114,16 @@ def get_db_status() -> Dict[str, Any]:
 
 
 # ---------------- WATCHLIST TABLE ----------------
-def add_to_watchlist(name: str, info: str, embedding: List[float], image_data: str) -> Dict[str, Any]:
-    """Adds a new player/person to the watchlist table."""
+def add_to_watchlist(
+    name: str,
+    info: str,
+    embedding: List[float],
+    image_data: str,
+    threat_level: str = "WATCHED",
+    origin_camera_id: str = "",
+    auto_enrolled: bool = False
+) -> Dict[str, Any]:
+    """Adds a new player/person or auto-enrolled armed suspect to the watchlist table."""
     record = {
         "id": str(uuid.uuid4()),
         "name": name.strip(),
@@ -123,6 +131,9 @@ def add_to_watchlist(name: str, info: str, embedding: List[float], image_data: s
         "embedding": embedding,
         "image": image_data,
         "status": "WATCHED",
+        "threat_level": threat_level,
+        "origin_camera_id": origin_camera_id,
+        "auto_enrolled": auto_enrolled,
         "created_at": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     }
 
@@ -156,6 +167,9 @@ def get_watchlist() -> List[Dict[str, Any]]:
                     "embedding": d.get("embedding", []),
                     "image": d.get("image", ""),
                     "status": d.get("status", "WATCHED"),
+                    "threat_level": d.get("threat_level", "WATCHED"),
+                    "origin_camera_id": d.get("origin_camera_id", ""),
+                    "auto_enrolled": d.get("auto_enrolled", False),
                     "created_at": d.get("created_at", "")
                 }
                 results.append(item)
@@ -265,9 +279,12 @@ def generate_alert(
     confidence: float,
     snapshot: str,
     camera_id: str = "cam_main",
-    camera_name: str = "Main Surveillance"
+    camera_name: str = "Main Surveillance",
+    alert_type: str = "PLAYER_WATCHLIST_MATCH",
+    threat_level: str = "HIGH",
+    origin_camera_id: str = ""
 ) -> Dict[str, Any]:
-    """Generates and logs an alert when a watched player is detected."""
+    """Generates and logs an alert when a watched player or cross-camera armed suspect is detected."""
     alert = {
         "id": str(uuid.uuid4()),
         "player_id": player_id,
@@ -277,7 +294,9 @@ def generate_alert(
         "snapshot": snapshot,
         "camera_id": camera_id,
         "camera_name": camera_name,
-        "alert_type": "PLAYER_WATCHLIST_MATCH",
+        "alert_type": alert_type,
+        "threat_level": threat_level,
+        "origin_camera_id": origin_camera_id,
         "timestamp": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     }
 
@@ -363,6 +382,8 @@ def get_alerts(limit: int = 25) -> List[Dict[str, Any]]:
                     "camera_id": d.get("camera_id", "cam_main"),
                     "camera_name": d.get("camera_name", "Main Camera"),
                     "alert_type": d.get("alert_type", "PLAYER_WATCHLIST_MATCH"),
+                    "threat_level": d.get("threat_level", "NORMAL"),
+                    "origin_camera_id": d.get("origin_camera_id", ""),
                     "timestamp": d.get("timestamp", "")
                 }
                 results.append(item)
